@@ -1,0 +1,105 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - 'extensions/5.1/**'
+  pull_request:
+    branches:
+      - 'extensions/5.1/**'
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        compiler: [gcc, clang]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y libreadline-dev
+
+      - name: Configure (GCC)
+        if: matrix.compiler == 'gcc'
+        run: cmake -B build -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++
+
+      - name: Configure (Clang)
+        if: matrix.compiler == 'clang'
+        run: cmake -B build -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test interpreter
+        run: ./build/lua51 -v
+
+  build-asan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y libreadline-dev
+
+      - name: Configure (ASan)
+        run: cmake -B build -DCMAKE_C_COMPILER=gcc -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -g" -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test interpreter
+        run: ./build/lua51 -v
+
+  build-macos:
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        compiler: [clang, gcc]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: brew install readline
+
+      - name: Configure (Clang)
+        if: matrix.compiler == 'clang'
+        run: cmake -B build -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+
+      - name: Configure (GCC)
+        if: matrix.compiler == 'gcc'
+        run: |
+          brew install gcc
+          cmake -B build -DCMAKE_C_COMPILER=gcc-14 -DCMAKE_CXX_COMPILER=g++-14
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test interpreter
+        run: ./build/lua51 -v
+
+  build-windows:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        include:
+          - name: MSVC
+            cmake_args: ""
+          - name: MinGW
+            cmake_args: "-G \"MinGW Makefiles\""
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure (${{ matrix.name }})
+        run: cmake -B build ${{ matrix.cmake_args }}
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Test interpreter
+        run: ./build/Release/lua51.exe -v
+        if: matrix.name == 'MSVC'
+
+      - name: Test interpreter (MinGW)
+        run: ./build/lua51.exe -v
+        if: matrix.name == 'MinGW'

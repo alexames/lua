@@ -1,0 +1,258 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Lua 5.1 Natvis file for Visual Studio debugging -->
+<AutoVisualizer xmlns="http://schemas.microsoft.com/vstudio/debugger/natvis/2010">
+    <Type Name="lua_State">
+        <DisplayString Condition="status==0">thread {this,X} [ok] stack={top-stack}</DisplayString>
+        <DisplayString Condition="status==1">thread {this,X} [yield] stack={top-stack}</DisplayString>
+        <DisplayString Condition="status==2">thread {this,X} [errrun] stack={top-stack}</DisplayString>
+        <DisplayString Condition="status==3">thread {this,X} [errsyntax] stack={top-stack}</DisplayString>
+        <DisplayString Condition="status==4">thread {this,X} [errmem] stack={top-stack}</DisplayString>
+        <DisplayString Condition="status==5">thread {this,X} [errerr] stack={top-stack}</DisplayString>
+        <DisplayString>thread {this,X} [status={status}] stack={top-stack}</DisplayString>
+        <Expand>
+            <Item Name="[status]">status</Item>
+            <Item Name="[stack size]">top-stack</Item>
+            <Item Name="[stack capacity]">stack_last-stack</Item>
+            <Item Name="[call depth]">ci-base_ci+1</Item>
+            <Synthetic Name="[current frame]">
+                <DisplayString>top={top-ci->func} values</DisplayString>
+                <Expand>
+                    <Item Name="[size]">top-ci->func</Item>
+                    <ArrayItems>
+                        <Size>top-ci->func</Size>
+                        <ValuePointer>ci->func</ValuePointer>
+                    </ArrayItems>
+                </Expand>
+            </Synthetic>
+            <Synthetic Name="[full stack]">
+                <DisplayString>{top-stack} values</DisplayString>
+                <Expand>
+                    <ArrayItems>
+                        <Size>top-stack</Size>
+                        <ValuePointer>stack</ValuePointer>
+                    </ArrayItems>
+                </Expand>
+            </Synthetic>
+            <Item Name="[current ci]">ci</Item>
+            <Synthetic Name="[call stack]">
+                <DisplayString>{ci-base_ci+1} frames</DisplayString>
+                <Expand>
+                    <ArrayItems>
+                        <Size>ci-base_ci+1</Size>
+                        <ValuePointer>base_ci</ValuePointer>
+                    </ArrayItems>
+                </Expand>
+            </Synthetic>
+            <Item Name="[globals]">&amp;l_gt</Item>
+            <Item Name="[registry]">&amp;(l_G->l_registry)</Item>
+            <Item Name="[global state]">l_G</Item>
+        </Expand>
+    </Type>
+    <Type Name="lua_TValue">
+        <DisplayString Condition="tt==0x00">nil                               </DisplayString>
+        <DisplayString Condition="tt==0x01">{(bool)value.b}                   </DisplayString>
+        <DisplayString Condition="tt==0x02">lightuserdata: {((void*)value.p)} </DisplayString>
+        <DisplayString Condition="tt==0x03">{value.n}                         </DisplayString>
+        <DisplayString Condition="tt==0x04">{((TString*)(value.gc)), na}      </DisplayString>
+        <DisplayString Condition="tt==0x05">table: {(Table*)value.gc, Xb}     </DisplayString>
+        <DisplayString Condition="tt==0x06">function: {(void*)value.gc, Xb}   </DisplayString>
+        <DisplayString Condition="tt==0x07">userdata: {(void*)value.gc, Xb}   </DisplayString>
+        <DisplayString Condition="tt==0x08">thread: {(void*)value.gc, Xb}     </DisplayString>
+        <DisplayString>error {tt}</DisplayString>
+        <Expand>
+            <ExpandedItem Condition="tt==4">((TString*)(value.gc))</ExpandedItem>
+            <ExpandedItem Condition="tt==5">((Table*)value.gc)</ExpandedItem>
+            <ExpandedItem Condition="tt==8">((lua_State*)value.gc)</ExpandedItem>
+        </Expand>
+    </Type>
+    <Type Name="LexState">
+    </Type>
+    <Type Name="FuncState">
+        <Expand>
+            <Synthetic Name="[constants]">
+                <DisplayString>size={nk}, capacity={f->sizek}</DisplayString>
+                <Expand>
+                    <Item Name="[size]">nk</Item>
+                    <Item Name="[capacity]">f->sizek</Item>
+                    <ArrayItems>
+                        <Size>nk</Size>
+                        <ValuePointer>f->k</ValuePointer>
+                    </ArrayItems>
+                </Expand>
+            </Synthetic>
+            <Synthetic Name="[upvalues]">
+                <DisplayString>size={(int)nups}, capacity={f->nups}</DisplayString>
+                <Expand>
+                    <Item Name="[size]">(int)nups</Item>
+                    <ArrayItems>
+                        <Size>nups</Size>
+                        <ValuePointer>f->upvalues</ValuePointer>
+                    </ArrayItems>
+                </Expand>
+            </Synthetic>
+            <Synthetic Name="[instructions]">
+                <DisplayString>size={pc}, capacity={f->sizecode}</DisplayString>
+                <Expand>
+                    <Item Name="[size]">pc</Item>
+                    <Item Name="[capacity]">f->sizecode</Item>
+                    <ArrayItems>
+                        <Size>pc</Size>
+                        <ValuePointer>f->code, X</ValuePointer>
+                    </ArrayItems>
+                </Expand>
+            </Synthetic>
+            <Synthetic Name="[locals]">
+                <DisplayString>size={(int)nactvar}, capacity={f->sizelocvars}</DisplayString>
+                <Expand>
+                    <Item Name="[size]">(int)nactvar</Item>
+                    <Item Name="[capacity]">f->sizelocvars</Item>
+                    <ArrayItems>
+                        <Size>nactvar</Size>
+                        <ValuePointer>f->locvars</ValuePointer>
+                    </ArrayItems>
+                </Expand>
+            </Synthetic>
+            <Synthetic Name="[functions]">
+                <DisplayString>capacity={f->sizep}</DisplayString>
+                <Expand>
+                    <Item Name="[capacity]">f->sizep</Item>
+                    <ArrayItems>
+                        <Size>f->sizep</Size>
+                        <ValuePointer>f->p, nr</ValuePointer>
+                    </ArrayItems>
+                </Expand>
+            </Synthetic>
+            <Item Name="[source]">f->source, nr</Item>
+        </Expand>
+    </Type>
+    <Type Name="Node">
+        <DisplayString Condition="i_key.tvk.tt==0x01">[{(bool)i_key.tvk.value.b}]={i_val}         </DisplayString>
+        <DisplayString Condition="i_key.tvk.tt==0x02">[{((void*)i_key.tvk.value.p)}]={i_val}      </DisplayString>
+        <DisplayString Condition="i_key.tvk.tt==0x03">[{i_key.tvk.value.n}]={i_val}               </DisplayString>
+        <DisplayString Condition="i_key.tvk.tt==0x04">[{((TString*)(i_key.tvk.value.gc)), na}]={i_val, na}</DisplayString>
+        <DisplayString Condition="i_key.tvk.tt==0x05">[{(Table*)i_key.tvk.value.gc, na}]={i_val}  </DisplayString>
+        <DisplayString Condition="i_key.tvk.tt==0x06">[{(void*)i_key.tvk.value.gc, Xb}]={i_val}   </DisplayString>
+        <DisplayString Condition="i_key.tvk.tt==0x07">[{(void*)i_key.tvk.value.gc, Xb}]={i_val}   </DisplayString>
+        <DisplayString Condition="i_key.tvk.tt==0x08">[{(void*)i_key.tvk.value.gc, Xb}]={i_val}   </DisplayString>
+        <Expand>
+            <Item Condition="i_key.tvk.tt==0x01" Name="[key]">(bool)i_key.tvk.value.b        </Item>
+            <Item Condition="i_key.tvk.tt==0x02" Name="[key]">((void*)i_key.tvk.value.p)     </Item>
+            <Item Condition="i_key.tvk.tt==0x03" Name="[key]">i_key.tvk.value.n              </Item>
+            <Item Condition="i_key.tvk.tt==0x04" Name="[key]">((TString*)(i_key.tvk.value.gc))</Item>
+            <Item Condition="i_key.tvk.tt==0x05" Name="[key]">(Table*)i_key.tvk.value.gc     </Item>
+            <Item Condition="i_key.tvk.tt==0x06" Name="[key]">(void*)i_key.tvk.value.gc      </Item>
+            <Item Condition="i_key.tvk.tt==0x07" Name="[key]">(void*)i_key.tvk.value.gc      </Item>
+            <Item Condition="i_key.tvk.tt==0x08" Name="[key]">(void*)i_key.tvk.value.gc      </Item>
+            <Item Name="[value]">i_val</Item>
+        </Expand>
+    </Type>
+    <Type Name="Table">
+        <DisplayString>Table 0x{(unsigned)gch.next, Xb}</DisplayString>
+        <Expand>
+            <Item Name="metatable">metatable</Item>
+            <Synthetic Name="[array]">
+                <DisplayString>size: {sizearray}</DisplayString>
+                <Expand>
+                    <ArrayItems>
+                        <Size>sizearray</Size>
+                        <ValuePointer>array</ValuePointer>
+                    </ArrayItems>
+                </Expand>
+            </Synthetic>
+            <Synthetic Name="[hashtable]">
+                <DisplayString>capacity: {(1 &lt;&lt; lsizenode)}</DisplayString>
+                <Expand>
+                    <CustomListItems MaxItemsPerView="5000">
+                        <Variable Name="i" InitialValue="0" />
+                        <Variable Name="n" InitialValue="&amp;node[i]" />
+                        <Loop>
+                            <Exec>n = &amp;node[i]</Exec>
+                            <If Condition="n-&gt;i_val.tt != 0">
+                                <Item Condition="n-&gt;i_key.tvk.tt==0x01" Name="[{(bool)n-&gt;i_key.tvk.value.b}]">                n, na</Item>
+                                <Item Condition="n-&gt;i_key.tvk.tt==0x02" Name="[userdata: {((void*)n-&gt;i_key.tvk.value.p)}]">   n, na</Item>
+                                <Item Condition="n-&gt;i_key.tvk.tt==0x03" Name="[{n-&gt;i_key.tvk.value.n}]">                      n, na</Item>
+                                <Item Condition="n-&gt;i_key.tvk.tt==0x04" Name="[{((TString*)(n-&gt;i_key.tvk.value.gc)), na}]">   n, na</Item>
+                                <Item Condition="n-&gt;i_key.tvk.tt==0x05" Name="[table: {(Table*)n-&gt;i_key.tvk.value.gc, Xb}]">  n, na</Item>
+                                <Item Condition="n-&gt;i_key.tvk.tt==0x06" Name="[function: {(void*)n-&gt;i_key.tvk.value.gc, Xb}]">n, na</Item>
+                                <Item Condition="n-&gt;i_key.tvk.tt==0x07" Name="[userdata: {(void*)n-&gt;i_key.tvk.value.gc, Xb}]">n, na</Item>
+                                <Item Condition="n-&gt;i_key.tvk.tt==0x08" Name="[thread: {(void*)n-&gt;i_key.tvk.value.gc, Xb}]">  n, na</Item>
+                            </If>
+                            <Exec>i++</Exec>
+                            <Break Condition="i &gt;= (1 &lt;&lt; lsizenode)" />
+                        </Loop>
+                    </CustomListItems>
+                </Expand>
+            </Synthetic>
+        </Expand>
+    </Type>
+    <Type Name="Proto">
+        <DisplayString>Proto</DisplayString>
+        <Expand>
+            <Synthetic Name="[constants]">
+                <DisplayString>capacity={sizek}</DisplayString>
+                <Expand>
+                    <Item Name="[capacity]">sizek</Item>
+                    <ArrayItems>
+                        <Size>sizek</Size>
+                        <ValuePointer>k</ValuePointer>
+                    </ArrayItems>
+                </Expand>
+            </Synthetic>
+            <Synthetic Name="[upvalues]">
+                <DisplayString>count={nups}</DisplayString>
+                <Expand>
+                    <Item Name="[count]">(int)nups</Item>
+                </Expand>
+            </Synthetic>
+            <Synthetic Name="[instructions]">
+                <DisplayString>capacity={sizecode}</DisplayString>
+                <Expand>
+                    <Item Name="[capacity]">sizecode</Item>
+                    <ArrayItems>
+                        <Size>sizecode</Size>
+                        <ValuePointer>code, X</ValuePointer>
+                    </ArrayItems>
+                </Expand>
+            </Synthetic>
+            <Synthetic Name="[locals]">
+                <DisplayString>capacity={sizelocvars}</DisplayString>
+                <Expand>
+                    <Item Name="[capacity]">sizelocvars</Item>
+                    <ArrayItems>
+                        <Size>sizelocvars</Size>
+                        <ValuePointer>locvars</ValuePointer>
+                    </ArrayItems>
+                </Expand>
+            </Synthetic>
+            <Synthetic Name="[functions]">
+                <DisplayString>capacity={sizep}</DisplayString>
+                <Expand>
+                    <Item Name="[capacity]">sizep</Item>
+                    <ArrayItems>
+                        <Size>sizep</Size>
+                        <ValuePointer>p, nr</ValuePointer>
+                    </ArrayItems>
+                </Expand>
+            </Synthetic>
+            <Item Name="[source]">source, nr</Item>
+        </Expand>
+    </Type>
+    <Type Name="CallInfo">
+        <DisplayString>CallInfo</DisplayString>
+        <Expand>
+            <Item Name="[stack size]">top-func</Item>
+            <IndexListItems>
+                <Size>top-func</Size>
+                <ValueNode>func[$i+1]</ValueNode>
+            </IndexListItems>
+        </Expand>
+    </Type>
+    <Type Name="TString">
+        <DisplayString>{(char*)(this + 1), s}</DisplayString>
+        <Expand>
+            <Item Name="[hash]">tsv.hash, X</Item>
+            <Item Name="[length]">tsv.len</Item>
+            <Item Name="[contents]">(const char*)(this + 1), s</Item>
+        </Expand>
+    </Type>
+</AutoVisualizer>
