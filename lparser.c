@@ -43,6 +43,8 @@
 #define eqstr(a,b)	((a) == (b))
 
 
+static void body(LexState *ls, expdesc *e, int ismethod, int line);
+
 /*
 ** nodes for block list (list of active blocks)
 */
@@ -859,17 +861,28 @@ static void recfield (LexState *ls, ConsControl *cc) {
   FuncState *fs = ls->fs;
   lu_byte reg = ls->fs->freereg;
   expdesc tab, key, val;
-  if (ls->t.token == TK_NAME) {
+  int isfunction = ls->t.token == TK_FUNCTION;
+  if (isfunction) {
+    checklimit(fs, cc->nh, INT_MAX, "items in a constructor");
+    luaX_next(ls); /* skip the FUNCTION */
+    codename(ls, &key);
+  } else if (ls->t.token == TK_NAME) {
     checklimit(fs, cc->nh, INT_MAX, "items in a constructor");
     codename(ls, &key);
   }
   else  /* ls->t.token == '[' */
     yindex(ls, &key);
   cc->nh++;
-  checknext(ls, '=');
+  if (!isfunction) {
+    checknext(ls, '=');
+  }
   tab = *cc->t;
   luaK_indexed(fs, &tab, &key);
-  expr(ls, &val);
+  if (isfunction) {
+    body(ls, &val, 0, ls->linenumber);
+  } else {
+    expr(ls, &val);
+  }
   luaK_storevar(fs, &tab, &val);
   fs->freereg = reg;  /* free registers */
 }
@@ -918,6 +931,13 @@ static void field (LexState *ls, ConsControl *cc) {
         listfield(ls, cc);
       else
         recfield(ls, cc);
+      break;
+    }
+    case TK_FUNCTION: {
+      if (luaX_lookahead(ls) == TK_NAME)
+        recfield(ls, cc);
+      else
+        listfield(ls, cc);
       break;
     }
     case '[': {
