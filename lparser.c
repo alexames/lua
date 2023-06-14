@@ -798,7 +798,7 @@ static void close_func (LexState *ls) {
 static int block_follow (LexState *ls, int withuntil) {
   switch (ls->t.token) {
     case TK_ELSE: case TK_ELSEIF:
-    case TK_END: case TK_EOS:
+    case TK_END: case TK_EOS: case '}':
       return 1;
     case TK_UNTIL: return withuntil;
     default: return 0;
@@ -1028,9 +1028,15 @@ static void body (LexState *ls, expdesc *e, int ismethod, int line) {
   }
   parlist(ls);
   checknext(ls, ')');
+  int braces = ls->t.token == '{';
+  if (braces)
+    luaX_next(ls);
   statlist(ls);
   new_fs.f->lastlinedefined = ls->linenumber;
-  check_match(ls, TK_END, TK_FUNCTION, line);
+  if (braces)
+    check_match(ls, '}', TK_FUNCTION, line);
+  else
+    check_match(ls, TK_END, TK_FUNCTION, line);
   codeclosure(ls, e);
   close_func(ls);
 }
@@ -1504,9 +1510,15 @@ static void whilestat (LexState *ls, int line) {
   condexit = cond(ls);
   enterblock(fs, &bl, 1);
   checknext(ls, TK_DO);
+  int braces = ls->t.token == '{';
+  if (braces)
+    luaX_next(ls);
   block(ls);
   luaK_jumpto(fs, whileinit);
-  check_match(ls, TK_END, TK_WHILE, line);
+  if (braces)
+    check_match(ls, '}', TK_WHILE, line);
+  else
+    check_match(ls, TK_END, TK_WHILE, line);
   leaveblock(fs);
   luaK_patchtohere(fs, condexit);  /* false conditions finish the loop */
 }
@@ -1569,14 +1581,21 @@ static void fixforjump (FuncState *fs, int pc, int dest, int back) {
 /*
 ** Generate code for a 'for' loop.
 */
-static void forbody (LexState *ls, int base, int line, int nvars, int isgen) {
+static void forbody (LexState *ls, int base, int line, int nvars, int isgen, int *braces) {
   /* forbody -> DO block */
   static const OpCode forprep[2] = {OP_FORPREP, OP_TFORPREP};
   static const OpCode forloop[2] = {OP_FORLOOP, OP_TFORLOOP};
   BlockCnt bl;
   FuncState *fs = ls->fs;
   int prep, endfor;
+  int braces = ls->t.token == '{';
+  if (braces || ls->t.token == TK_DO)
+    luaX_next(ls);
+  else
+    luaX_syntaxerror(ls, "'do' or '{' expected");
   checknext(ls, TK_DO);
+  if (*braces = ls->t.token == '{')
+    luaX_next(ls);
   prep = luaK_codeABx(fs, forprep[isgen], base, 0);
   fs->freereg--;  /* both 'forprep' remove one register from the stack */
   enterblock(fs, &bl, 0);  /* scope for declared variables */
@@ -1592,10 +1611,14 @@ static void forbody (LexState *ls, int base, int line, int nvars, int isgen) {
   endfor = luaK_codeABx(fs, forloop[isgen], base, 0);
   fixforjump(fs, endfor, prep + 1, 1);
   luaK_fixline(fs, line);
+  if (braces)
+    check_match(ls, '}', '{', line);
+  else
+    check_match(ls, TK_END, TK_FOR, line);
 }
 
 
-static void fornum (LexState *ls, TString *varname, int line) {
+static void fornum (LexState *ls, TString *varname, int line, int *braces) {
   /* fornum -> NAME = exp,exp[,exp] forbody */
   FuncState *fs = ls->fs;
   int base = fs->freereg;
@@ -1613,11 +1636,11 @@ static void fornum (LexState *ls, TString *varname, int line) {
     luaK_reserveregs(fs, 1);
   }
   adjustlocalvars(ls, 2);  /* start scope for internal variables */
-  forbody(ls, base, line, 1, 0);
+  forbody(ls, base, line, 1, 0, braces);
 }
 
 
-static void forlist (LexState *ls, TString *indexname) {
+static void forlist (LexState *ls, TString *indexname, int *braces) {
   /* forlist -> NAME {,NAME} IN explist forbody */
   FuncState *fs = ls->fs;
   expdesc e;
@@ -1640,7 +1663,7 @@ static void forlist (LexState *ls, TString *indexname) {
   adjustlocalvars(ls, 3);  /* start scope for internal variables */
   marktobeclosed(fs);  /* last internal var. must be closed */
   luaK_checkstack(fs, 2);  /* extra space to call iterator */
-  forbody(ls, base, line, nvars - 3, 1);
+  forbody(ls, base, line, nvars - 3, 1, braces);
 }
 
 
@@ -1649,15 +1672,19 @@ static void forstat (LexState *ls, int line) {
   FuncState *fs = ls->fs;
   TString *varname;
   BlockCnt bl;
+  int braces = 0;
   enterblock(fs, &bl, 1);  /* scope for loop and control variables */
   luaX_next(ls);  /* skip 'for' */
   varname = str_checkname(ls);  /* first variable name */
   switch (ls->t.token) {
-    case '=': fornum(ls, varname, line); break;
-    case ',': case TK_IN: forlist(ls, varname); break;
+    case '=': fornum(ls, varname, line, &braces); break;
+    case ',': case TK_IN: forlist(ls, varname, &braces); break;
     default: luaX_syntaxerror(ls, "'=' or 'in' expected");
   }
-  check_match(ls, TK_END, TK_FOR, line);
+  if (braces)
+    check_match(ls, '}', '{', line);
+  else
+    check_match(ls, TK_END, TK_FOR, line);
   leaveblock(fs);  /* loop scope ('break' jumps to this point) */
 }
 
@@ -1888,8 +1915,14 @@ static void statement (LexState *ls) {
     }
     case TK_DO: {  /* stat -> DO block END */
       luaX_next(ls);  /* skip DO */
+      int braces = ls->t.token == '{';
+      if (braces)
+        luaX_next(ls);
       block(ls);
-      check_match(ls, TK_END, TK_DO, line);
+      if (braces)
+        check_match(ls, '}', TK_DO, line);
+      else
+        check_match(ls, TK_END, TK_DO, line);
       break;
     }
     case TK_FOR: {  /* stat -> forstat */
