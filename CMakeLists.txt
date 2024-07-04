@@ -115,6 +115,10 @@ set(LUA_INTERPRETER_SOURCES
     ${LUA_SOURCE_DIR}/lua.c
 )
 
+set(LUA_COMPILER_SOURCES
+    ${LUA_SOURCE_DIR}/luac.c
+)
+
 source_group("Public Headers" FILES ${LUA_PUBLIC_HEADERS})
 source_group("Modules" FILES ${LUA_MODULE_SOURCES})
 source_group("Library/Source" FILES ${LUA_LIBRARY_SOURCES})
@@ -198,6 +202,7 @@ endif()
 
 set(library_name "lua-${LUA_VERSION}")
 set(interpreter_name "luai-${LUA_VERSION}")
+set(compiler_name "luac-${LUA_VERSION}")
 
 # Library.
 add_library(${library_name} STATIC
@@ -233,3 +238,11 @@ set_target_properties(${interpreter_name}
         FOLDER Lua
 )
 target_link_libraries(${interpreter_name} PRIVATE ${library_name})
+
+add_executable(${compiler_name} ${LUA_COMPILER_SOURCES})
+set_target_properties(${compiler_name}
+    PROPERTIES
+        LINKER_LANGUAGE ${LUA_LINKER_LANGUAGE}
+        FOLDER Lua
+)
+target_link_libraries(${compiler_name} PRIVATE ${library_name})
