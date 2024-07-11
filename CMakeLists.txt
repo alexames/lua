@@ -104,6 +104,10 @@ set(LUA_LIBRARY_HEADERS
     ${LUA_SOURCE_DIR}/lzio.h
 )
 
+set(LUA_NATVIS
+    ${LUA_SOURCE_DIR}/natvis/lua.natvis
+)
+
 if (LUA_VERSION VERSION_GREATER_EQUAL 5.1)
     list(APPEND LUA_MODULE_SOURCES ${LUA_SOURCE_DIR}/loslib.c)
     list(APPEND LUA_PUBLIC_HEADERS ${LUA_SOURCE_DIR}/luaconf.h)
@@ -224,6 +228,13 @@ add_library(${LUA_LIBRARY_TARGET} STATIC
     ${LUA_LIBRARY_SOURCES}
     ${LUA_LIBRARY_HEADERS}
 )
+
+if(MSVC)
+    target_sources(${LUA_LIBRARY_TARGET}
+        PUBLIC
+            $<BUILD_INTERFACE:${LUA_NATVIS}>
+    )
+endif()
 
 add_library(${LUA_PROJECT_NAME}::${LUA_PROJECT_NAME} ALIAS ${LUA_LIBRARY_TARGET})
 target_include_directories(${LUA_LIBRARY_TARGET}

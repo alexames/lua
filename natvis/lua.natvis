@@ -1,0 +1,285 @@
+<?xml version="1.0" encoding="utf-8"?>
+<AutoVisualizer xmlns="http://schemas.microsoft.com/vstudio/debugger/natvis/2010">
+    <Type Name="lua_State">
+        <DisplayString>lua_State</DisplayString>
+        <Expand>
+            <Synthetic Name="[stack]">
+                <DisplayString>size={top.p-ci->func.p}</DisplayString>
+                <Expand>
+                    <Item Name="[size]">top.p-ci->func.p</Item>
+                    <ArrayItems>
+                        <Size>top.p-ci->func.p</Size>
+                        <ValuePointer>(stack.p + 2)</ValuePointer>
+                    </ArrayItems>
+                </Expand>
+            </Synthetic>
+            <Item Name="[globals]">(Table*)(((Table*)l_G->l_registry.value_.gc)->array - 2)->p, na</Item>
+            <Item Name="[registry]">(Table*)(l_G->l_registry.value_.gc), na</Item>
+            <Item Name="[call]">9999</Item>
+            <Item Name="[call item size]">nci</Item>
+            <IndexListItems>
+                <Size>nci</Size>
+                <ValueNode>ci[$i]</ValueNode>
+            </IndexListItems>
+        </Expand>
+    </Type>
+    <Type Name="TValue">
+        <DisplayString Condition="(tt_ &amp; 0x0F)==0x00">nil                               </DisplayString>
+        <DisplayString Condition="(tt_ &amp; 0x0F)==0x01">{(bool)value_.i}                  </DisplayString>
+        <DisplayString Condition="(tt_ &amp; 0x0F)==0x02">lightuserdata: {((void*)value_.p)}</DisplayString>
+        <DisplayString Condition="(tt_ &amp; 0x1F)==0x03">{value_.i}                        </DisplayString>
+        <DisplayString Condition="(tt_ &amp; 0x1F)==0x13">{value_.n}                        </DisplayString>
+        <DisplayString Condition="(tt_ &amp; 0x0F)==0x04">{((TString*)(value_.p)), na}      </DisplayString>
+        <DisplayString Condition="(tt_ &amp; 0x0F)==0x05">table: {(Table*)value_.gc, Xb}    </DisplayString>
+        <DisplayString Condition="(tt_ &amp; 0x0F)==0x06">function: {(void*)value_.gc, Xb}  </DisplayString>
+        <DisplayString Condition="(tt_ &amp; 0x0F)==0x07">userdata: {(void*)value_.gc, Xb}  </DisplayString>
+        <DisplayString Condition="(tt_ &amp; 0x0F)==0x08">thread: {(void*)value_.gc, Xb}    </DisplayString>
+        <DisplayString>error {tt_ &amp; 0x0F}</DisplayString>
+        <Expand>
+            <ExpandedItem Condition="(tt_ &amp; 0x0F)==4">((TString*)(value_.p))</ExpandedItem>
+            <ExpandedItem Condition="(tt_ &amp; 0x0F)==5">((Table*)value_.gc)</ExpandedItem>
+        </Expand>
+    </Type>
+    <Type Name="StackValue">
+        <DisplayString Condition="(val.tt_ &amp; 0x0F)==0x00">nil                                   </DisplayString>
+        <DisplayString Condition="(val.tt_ &amp; 0x0F)==0x01">{(bool)val.value_.i}                  </DisplayString>
+        <DisplayString Condition="(val.tt_ &amp; 0x0F)==0x02">lightuserdata: {((void*)val.value_.p)}</DisplayString>
+        <DisplayString Condition="(val.tt_ &amp; 0x1F)==0x03">{val.value_.i}                        </DisplayString>
+        <DisplayString Condition="(val.tt_ &amp; 0x1F)==0x13">{val.value_.n}                        </DisplayString>
+        <DisplayString Condition="(val.tt_ &amp; 0x0F)==0x04">{((TString*)(val.value_.p)), na}      </DisplayString>
+        <DisplayString Condition="(val.tt_ &amp; 0x0F)==0x05">table: {(Table*)val.value_.gc, Xb}    </DisplayString>
+        <DisplayString Condition="(val.tt_ &amp; 0x0F)==0x06">function: {(void*)val.value_.gc, Xb}  </DisplayString>
+        <DisplayString Condition="(val.tt_ &amp; 0x0F)==0x07">userdata: {(void*)val.value_.gc, Xb}  </DisplayString>
+        <DisplayString Condition="(val.tt_ &amp; 0x0F)==0x08">thread: {(void*)val.value_.gc, Xb}    </DisplayString>
+        <DisplayString>error {val.tt_ &amp; 0x0F}</DisplayString>
+        <Expand>
+            <ExpandedItem Condition="(val.tt_ &amp; 0x0F)==0x00">"nil", sb                 </ExpandedItem>
+            <ExpandedItem Condition="(val.tt_ &amp; 0x0F)==0x01">(bool)val.value_.i        </ExpandedItem>
+            <ExpandedItem Condition="(val.tt_ &amp; 0x0F)==0x02">((void*)val.value_.p)     </ExpandedItem>
+            <ExpandedItem Condition="(val.tt_ &amp; 0x1F)==0x03">val.value_.i              </ExpandedItem>
+            <ExpandedItem Condition="(val.tt_ &amp; 0x1F)==0x13">val.value_.n              </ExpandedItem>
+            <ExpandedItem Condition="(val.tt_ &amp; 0x0F)==0x04">((TString*)(val.value_.p))</ExpandedItem>
+            <ExpandedItem Condition="(val.tt_ &amp; 0x0F)==0x05">(Table*)val.value_.gc     </ExpandedItem>
+            <ExpandedItem Condition="(val.tt_ &amp; 0x0F)==0x06">(void*)val.value_.gc      </ExpandedItem>
+            <ExpandedItem Condition="(val.tt_ &amp; 0x0F)==0x07">(void*)val.value_.gc      </ExpandedItem>
+            <ExpandedItem Condition="(val.tt_ &amp; 0x0F)==0x08">(void*)val.value_.gc      </ExpandedItem>
+        </Expand>
+    </Type>
+    <Type Name="LexState">
+    </Type>
+    <Type Name="FuncState">
+        <Expand>
+            <Synthetic Name="[constants]">
+                <DisplayString>size={nk}, capacity={f->sizek}</DisplayString>
+                <Expand>
+                    <Item Name="[size]">nk</Item>
+                    <Item Name="[capacity]">f->sizek</Item>
+                    <ArrayItems>
+                        <Size>nk</Size>
+                        <ValuePointer>f->k</ValuePointer>
+                    </ArrayItems>
+                </Expand>
+            </Synthetic>
+            <Synthetic Name="[upvalues]">
+                <DisplayString>size={(int)nups}, capacity={f->sizeupvalues}</DisplayString>
+                <Expand>
+                    <Item Name="[size]">(int)nups</Item>
+                    <Item Name="[capacity]">f->sizeupvalues</Item>
+                    <ArrayItems>
+                        <Size>nups</Size>
+                        <ValuePointer>f->upvalues</ValuePointer>
+                    </ArrayItems>
+                </Expand>
+            </Synthetic>
+            <Synthetic Name="[instructions]">
+                <DisplayString>size={pc}, capacity={f->sizecode}</DisplayString>
+                <Expand>
+                    <Item Name="[size]">pc</Item>
+                    <Item Name="[capacity]">f->sizecode</Item>
+                    <ArrayItems>
+                        <Size>pc</Size>
+                        <ValuePointer>f->code, X</ValuePointer>
+                    </ArrayItems>
+                </Expand>
+            </Synthetic>
+            <Synthetic Name="[locals]">
+                <DisplayString>size={(int)nactvar}, capacity={f->sizelocvars}</DisplayString>
+                <Expand>
+                    <Item Name="[size]">(int)nactvar</Item>
+                    <Item Name="[capacity]">f->sizelocvars</Item>
+                    <ArrayItems>
+                        <Size>nactvar</Size>
+                        <ValuePointer>f->locvars</ValuePointer>
+                    </ArrayItems>
+                </Expand>
+            </Synthetic>
+            <Synthetic Name="[functions]">
+                <DisplayString>capacity={f->sizep}</DisplayString>
+                <Expand>
+                    <Item Name="[capacity]">f->sizep</Item>
+                    <ArrayItems>
+                        <Size>f->sizep</Size>
+                        <ValuePointer>f->p, nr</ValuePointer>
+                    </ArrayItems>
+                </Expand>
+            </Synthetic>
+            <Item Name="[source]">f->source, nr</Item>
+        </Expand>
+    </Type>
+    <Type Name="Node">
+        <DisplayString Condition="(u.key_tt &amp; 0x0F)==0x01">[{(bool)u.key_val.i}]={i_val}         </DisplayString>
+        <DisplayString Condition="(u.key_tt &amp; 0x0F)==0x02">[{((void*)u.key_val.p)}]={i_val}      </DisplayString>
+        <DisplayString Condition="(u.key_tt &amp; 0x0F)==0x03">[{u.key_val.i}]={i_val}               </DisplayString>
+        <DisplayString Condition="(u.key_tt &amp; 0x0F)==0x13">[{u.key_val.n}]={i_val}               </DisplayString>
+        <DisplayString Condition="(u.key_tt &amp; 0x0F)==0x04">[{((TString*)(u.key_val.p)), na}]={i_val, na}</DisplayString>
+        <DisplayString Condition="(u.key_tt &amp; 0x0F)==0x05">[{(Table*)u.key_val.gc, na}]={i_val}  </DisplayString>
+        <DisplayString Condition="(u.key_tt &amp; 0x0F)==0x06">[{(void*)u.key_val.gc, Xb}]={i_val}   </DisplayString>
+        <DisplayString Condition="(u.key_tt &amp; 0x0F)==0x07">[{(void*)u.key_val.gc, Xb}]={i_val}   </DisplayString>
+        <DisplayString Condition="(u.key_tt &amp; 0x0F)==0x08">[{(void*)u.key_val.gc, Xb}]={i_val}   </DisplayString>
+        <Expand>
+            <Item Condition="(u.key_tt &amp; 0x0F)==0x01" Name="[key]">(bool)u.key_val.i        </Item>
+            <Item Condition="(u.key_tt &amp; 0x0F)==0x02" Name="[key]">((void*)u.key_val.p)     </Item>
+            <Item Condition="(u.key_tt &amp; 0x0F)==0x03" Name="[key]">u.key_val.i              </Item>
+            <Item Condition="(u.key_tt &amp; 0x0F)==0x13" Name="[key]">u.key_val.n              </Item>
+            <Item Condition="(u.key_tt &amp; 0x0F)==0x04" Name="[key]">((TString*)(u.key_val.p))</Item>
+            <Item Condition="(u.key_tt &amp; 0x0F)==0x05" Name="[key]">(Table*)u.key_val.gc, Xb </Item>
+            <Item Condition="(u.key_tt &amp; 0x0F)==0x06" Name="[key]">(void*)u.key_val.gc, Xb  </Item>
+            <Item Condition="(u.key_tt &amp; 0x0F)==0x07" Name="[key]">(void*)u.key_val.gc, Xb  </Item>
+            <Item Condition="(u.key_tt &amp; 0x0F)==0x08" Name="[key]">(void*)u.key_val.gc, Xb  </Item>
+
+            <Item Name="[value]">  i_val</Item>
+        </Expand>
+    </Type>
+    <Type Name="Table">
+        <DisplayString>Table 0x{(unsigned)next, Xb}</DisplayString>
+        <Expand>
+            <Item Name="metatable">metatable</Item>
+            <Synthetic Name="[array]">
+                <DisplayString>capacity: {alimit}</DisplayString>
+                <Expand>
+                    <IndexListItems>
+                        <Size>alimit</Size>
+                        <ValueNode Condition="(*(((char*)array) + $i) &amp; 0x0F)==0x00">"nil", sb</ValueNode>
+                        <ValueNode Condition="(*(((char*)array) + $i) &amp; 0x0F)==0x01">(bool)     (array - 1 - $i)->i</ValueNode>
+                        <ValueNode Condition="(*(((char*)array) + $i) &amp; 0x0F)==0x02">           (array - 1 - $i)->p</ValueNode>
+                        <ValueNode Condition="(*(((char*)array) + $i) &amp; 0x0F)==0x03">           (array - 1 - $i)->i</ValueNode>
+                        <ValueNode Condition="(*(((char*)array) + $i) &amp; 0x0F)==0x13">           (array - 1 - $i)->n</ValueNode>
+                        <ValueNode Condition="(*(((char*)array) + $i) &amp; 0x0F)==0x04">(TString*) (array - 1 - $i)->p</ValueNode>
+                        <ValueNode Condition="(*(((char*)array) + $i) &amp; 0x0F)==0x05">(Table*)   (array - 1 - $i)->p</ValueNode>
+                        <ValueNode Condition="(*(((char*)array) + $i) &amp; 0x0F)==0x06">           (array - 1 - $i)->p</ValueNode>
+                        <ValueNode Condition="(*(((char*)array) + $i) &amp; 0x0F)==0x07">           (array - 1 - $i)->p</ValueNode>
+                        <ValueNode Condition="(*(((char*)array) + $i) &amp; 0x0F)==0x08">           (array - 1 - $i)->p</ValueNode>
+                        <ValueNode>"error"</ValueNode>
+                    </IndexListItems>
+                </Expand>
+            </Synthetic>
+            <Synthetic Name="[hashtable]">
+                <DisplayString>capacity: {(1 &lt;&lt; lsizenode)}</DisplayString>
+                <Expand>
+                    <CustomListItems MaxItemsPerView="5000">
+                        <Variable Name="i" InitialValue="0" />
+                        <Variable Name="n" InitialValue="&amp;node[i]" />
+                        <Loop>
+                            <Exec>n = &amp;node[i]</Exec>
+                            <If Condition="(n-&gt;i_val.tt_ &amp; 0x0F) != 0">
+                                <Item Condition="(n-&gt;u.key_tt &amp; 0x0F)==0x01" Name="[{(bool)n-&gt;u.key_val.i}]">                n, na</Item>
+                                <Item Condition="(n-&gt;u.key_tt &amp; 0x0F)==0x02" Name="[userdata: {((void*)n-&gt;u.key_val.p)}]">   n, na</Item>
+                                <Item Condition="(n-&gt;u.key_tt &amp; 0x0F)==0x03" Name="[{n-&gt;u.key_val.i}]">                      n, na</Item>
+                                <Item Condition="(n-&gt;u.key_tt &amp; 0x0F)==0x13" Name="[{n-&gt;u.key_val.n}]">                      n, na</Item>
+                                <Item Condition="(n-&gt;u.key_tt &amp; 0x0F)==0x04" Name="[{((TString*)(n-&gt;u.key_val.p)), na}]">    n, na</Item>
+                                <Item Condition="(n-&gt;u.key_tt &amp; 0x0F)==0x05" Name="[table: {(Table*)n-&gt;u.key_val.gc, Xb}]">  n, na</Item>
+                                <Item Condition="(n-&gt;u.key_tt &amp; 0x0F)==0x06" Name="[function: {(void*)n-&gt;u.key_val.gc, Xb}]">n, na</Item>
+                                <Item Condition="(n-&gt;u.key_tt &amp; 0x0F)==0x07" Name="[userdata: {(void*)n-&gt;u.key_val.gc, Xb}]">n, na</Item>
+                                <Item Condition="(n-&gt;u.key_tt &amp; 0x0F)==0x08" Name="[thread: {(void*)n-&gt;u.key_val.gc, Xb}]">  n, na</Item>
+                            </If>
+                            <Exec>i++</Exec>
+                            <Break Condition="i &gt;= (1 &lt;&lt; lsizenode)" />
+                        </Loop>
+                    </CustomListItems>
+                </Expand>
+            </Synthetic>
+        </Expand>
+    </Type>
+    <!--<Type Name="Upvaldesc">
+        <DisplayString>Proto</DisplayString>
+        <Expand>
+        </Expand>
+    </Type>-->
+    <Type Name="Proto">
+        <DisplayString>Proto</DisplayString>
+        <Expand>
+            <Synthetic Name="[constants]">
+                <DisplayString>capacity={sizek}</DisplayString>
+                <Expand>
+                    <Item Name="[capacity]">sizek</Item>
+                    <ArrayItems>
+                        <Size>sizek</Size>
+                        <ValuePointer>k</ValuePointer>
+                    </ArrayItems>
+                </Expand>
+            </Synthetic>
+            <Synthetic Name="[upvalues]">
+                <DisplayString>capacity={sizeupvalues}</DisplayString>
+                <Expand>
+                    <Item Name="[capacity]">sizeupvalues</Item>
+                    <ArrayItems>
+                        <Size>sizeupvalues</Size>
+                        <ValuePointer>upvalues</ValuePointer>
+                    </ArrayItems>
+                </Expand>
+            </Synthetic>
+            <Synthetic Name="[instructions]">
+                <DisplayString>capacity={sizecode}</DisplayString>
+                <Expand>
+                    <Item Name="[capacity]">sizecode</Item>
+                    <ArrayItems>
+                        <Size>sizecode</Size>
+                        <ValuePointer>code, X</ValuePointer>
+                    </ArrayItems>
+                </Expand>
+            </Synthetic>
+            <Synthetic Name="[locals]">
+                <DisplayString>capacity={sizelocvars}</DisplayString>
+                <Expand>
+                    <Item Name="[capacity]">sizelocvars</Item>
+                    <ArrayItems>
+                        <Size>sizelocvars</Size>
+                        <ValuePointer>locvars</ValuePointer>
+                    </ArrayItems>
+                </Expand>
+            </Synthetic>
+            <Synthetic Name="[functions]">
+                <DisplayString>capacity={sizep}</DisplayString>
+                <Expand>
+                    <Item Name="[capacity]">sizep</Item>
+                    <ArrayItems>
+                        <Size>sizep</Size>
+                        <ValuePointer>p, nr</ValuePointer>
+                    </ArrayItems>
+                </Expand>
+            </Synthetic>
+            <Item Name="[source]">source, nr</Item>
+        </Expand>
+    </Type>
+    <Type Name="CallInfo">
+        <DisplayString>CallInfo</DisplayString>
+        <Expand>
+            <Item Name="[stack size]">top.p-func.p</Item>
+            <IndexListItems>
+                <Size>top.p-func.p</Size>
+                <ValueNode>func.p[$i+1]</ValueNode>
+            </IndexListItems>
+            <Item Name="[previous]">previous</Item>
+            <Item Name="[next]">next</Item>
+        </Expand>
+    </Type>
+    <Type Name="TString">
+        <DisplayString Condition="shrlen &lt; 0">{(char*)contents}</DisplayString>
+        <DisplayString>{(char*)((char**)&amp;contents), s}</DisplayString>
+        <Expand>
+            <Item Name="[hash]">hash, X</Item>
+            <Item Name="[short string]">(bool)(shrlen &gt;= 0)</Item>
+            <Item Name="[contents]">(const char*)((shrlen &lt; 0) ? contents : (char*)((char**)&amp;contents)), s</Item>
+        </Expand>
+    </Type>
+</AutoVisualizer>
