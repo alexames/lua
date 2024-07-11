@@ -61,7 +61,7 @@ set(LUA_LIBRARY_SOURCES
     ${LUA_SOURCE_DIR}/lstate.c
     ${LUA_SOURCE_DIR}/lstring.c
     ${LUA_SOURCE_DIR}/ltable.c
-    ${LUA_SOURCE_DIR}/ltests.c
+    # ${LUA_SOURCE_DIR}/ltests.c
     ${LUA_SOURCE_DIR}/ltm.c
     ${LUA_SOURCE_DIR}/lundump.c
     ${LUA_SOURCE_DIR}/lvm.c
@@ -125,7 +125,7 @@ source_group("Interpreter" FILES ${LUA_INTERPRETER_SOURCES})
 # Apply luaconf settings
 
 if(${LUA_CONF_32BITS})
-  set(LUA_CONF_DEFINES -DLUA_32BITS)
+  set(LUA_CONF_DEFINES -DLUA_32BITS ${LUA_CONF_DEFINES})
 endif()
 
 if(${LUA_CONF_USE_C89})
@@ -181,6 +181,13 @@ if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang"
         -Wc++-compat
         -Wold-style-definition
     )
+
+    list(APPEND LUA_CONF_DEFINES LUA_USE_LINUX)
+    list(APPEND LUA_CONF_DEFINES LUA_USE_READLINE)
+
+    list(APPEND dependencies dl)
+    list(APPEND dependencies readline)
+    list(APPEND dependencies m)
 elseif ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "MSVC")
     # TODO: Add MSVC warnings
 endif()
@@ -216,6 +223,8 @@ target_include_directories(${library_name}
 target_compile_definitions(${library_name} 
     PUBLIC 
         ${LUA_CONF_DEFINES}
+)
+target_compile_options(${library_name} 
     PRIVATE
         ${LUA_CWARNS}
 )
@@ -232,4 +241,4 @@ set_target_properties(${interpreter_name}
         LINKER_LANGUAGE ${LUA_LINKER_LANGUAGE}
         FOLDER Lua
 )
-target_link_libraries(${interpreter_name} PRIVATE ${library_name})
+target_link_libraries(${interpreter_name} PRIVATE ${library_name} ${dependencies})
