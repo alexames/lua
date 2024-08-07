@@ -910,7 +910,7 @@ static void listfield (LexState *ls, ConsControl *cc) {
 }
 
 
-static void field (LexState *ls, ConsControl *cc) {
+static void field (LexState *ls, ConsControl *cc, expdesc *d) {
   /* field -> listfield | recfield */
   switch(ls->t.token) {
     case TK_NAME: {  /* may be 'listfield' or 'recfield' */
@@ -922,6 +922,13 @@ static void field (LexState *ls, ConsControl *cc) {
     }
     case '[': {
       recfield(ls, cc);
+      break;
+    }
+    case '@': {
+      luaX_next(ls);
+      expdesc d2;
+      simpleexp(ls, &d2);
+      field(ls, cc, &d2);
       break;
     }
     default: {
