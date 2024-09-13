@@ -838,6 +838,25 @@ static void yindex (LexState *ls, expdesc *v) {
 }
 
 
+static void callfunc (LexState* ls, expdesc* f, expdesc* args) {
+  FuncState *fs = ls->fs;
+  int base, nparams;
+  lua_assert(f->k == VNONRELOC);
+  base = f->u.info;  /* base register for call */
+  if (hasmultret(args->k))
+    nparams = LUA_MULTRET;  /* open call */
+  else {
+    if (args->k != VVOID)
+      luaK_exp2nextreg(fs, args);  /* close last argument */
+    nparams = fs->freereg - (base+1);
+  }
+  init_exp(f, VCALL, luaK_codeABC(fs, OP_CALL, base, nparams+1, 2));
+  /* call removes function and arguments and leaves one result (unless
+     changed later) */
+  fs->freereg = cast_byte(base + 1);
+}
+
+
 /*
 ** {======================================================================
 ** Rules for Constructors
@@ -1061,7 +1080,6 @@ static int explist (LexState *ls, expdesc *v) {
 static void funcargs (LexState *ls, expdesc *f) {
   FuncState *fs = ls->fs;
   expdesc args;
-  int base, nparams;
   int line = ls->linenumber;
   switch (ls->t.token) {
     case '(': {  /* funcargs -> '(' [ explist ] ')' */
@@ -1089,20 +1107,8 @@ static void funcargs (LexState *ls, expdesc *f) {
       luaX_syntaxerror(ls, "function arguments expected");
     }
   }
-  lua_assert(f->k == VNONRELOC);
-  base = f->u.info;  /* base register for call */
-  if (hasmultret(args.k))
-    nparams = LUA_MULTRET;  /* open call */
-  else {
-    if (args.k != VVOID)
-      luaK_exp2nextreg(fs, &args);  /* close last argument */
-    nparams = fs->freereg - (base+1);
-  }
-  init_exp(f, VCALL, luaK_codeABC(fs, OP_CALL, base, nparams+1, 2));
+  callfunc(ls, f, &args);
   luaK_fixline(fs, line);
-  /* call removes function and arguments and leaves one result (unless
-     changed later) */
-  fs->freereg = cast_byte(base + 1);
 }
 
 
