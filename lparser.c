@@ -1013,9 +1013,9 @@ static void field (LexState *ls, ConsControl *cc, decorstack* d_prev) {
     }
     case TK_FUNCTION: {
       if (luaX_lookahead(ls) == TK_NAME)
-        recfield(ls, cc);
+        recfield(ls, cc, d_prev);
       else
-        listfield(ls, cc);
+        listfield(ls, cc, d_prev);
       break;
     }
     case '[': {

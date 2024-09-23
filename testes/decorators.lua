@@ -45,7 +45,13 @@ t = {
   printhello = function()
     print 'Hello!'
   end,
+
+  @decorators.calltwice
+  function printhelloagain()
+    print 'Hello again!'
+  end,
 }
 
 print(t.x)
 t.printhello()
+t.printhelloagain()
