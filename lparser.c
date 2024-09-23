@@ -854,22 +854,31 @@ typedef struct ConsControl {
 } ConsControl;
 
 
-static void recfield (LexState *ls, ConsControl *cc) {
+static void recfieldkey(LexState *ls, ConsControl *cc, expdesc* key) {
+  FuncState *fs = ls->fs;
+  if (ls->t.token == TK_NAME) {
+    luaY_checklimit(fs, cc->nh, INT_MAX / 2, "items in a constructor");
+    codename(ls, key);
+  }
+  else  /* ls->t.token == '[' */
+    yindex(ls, key);
+}
+
+
+static void recfield (LexState *ls, ConsControl *cc, decorstack *d) {
   /* recfield -> (NAME | '['exp']') = exp */
   FuncState *fs = ls->fs;
   lu_byte reg = ls->fs->freereg;
   expdesc tab, key, val;
-  if (ls->t.token == TK_NAME) {
-    luaY_checklimit(fs, cc->nh, INT_MAX / 2, "items in a constructor");
-    codename(ls, &key);
-  }
-  else  /* ls->t.token == '[' */
-    yindex(ls, &key);
+  /* get field key */
+  recfieldkey(ls, cc, &key);
+  tab = *cc->t;
   cc->nh++;
   checknext(ls, '=');
-  tab = *cc->t;
   luaK_indexed(fs, &tab, &key);
+  /* evaluate value */
   expr(ls, &val);
+  /* store result */
   luaK_storevar(fs, &tab, &val);
   fs->freereg = reg;  /* free registers */
 }
