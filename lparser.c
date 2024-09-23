@@ -1825,7 +1825,8 @@ static void exprstat (LexState *ls) {
   FuncState *fs = ls->fs;
   struct LHS_assign v;
   suffixedexp(ls, &v.v);
-  if (ls->t.token == '=' || ls->t.token == ',') { /* stat -> assignment ? */
+  /* stat -> assignment ? */
+  if (ls->t.token == '=' || ls->t.token == ',') {
     v.prev = NULL;
     restassign(ls, &v, 1);
   }
