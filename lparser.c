@@ -43,6 +43,8 @@
 #define eqstr(a,b)	((a) == (b))
 
 
+static void body(LexState *ls, expdesc *e, int ismethod, int line);
+
 /*
 ** nodes for block list (list of active blocks)
 */
@@ -889,14 +891,18 @@ typedef struct ConsControl {
 } ConsControl;
 
 
-static void recfieldkey(LexState *ls, ConsControl *cc, expdesc* key) {
+static int recfieldkey(LexState *ls, ConsControl *cc, expdesc* key) {
   FuncState *fs = ls->fs;
-  if (ls->t.token == TK_NAME) {
-    luaY_checklimit(fs, cc->nh, INT_MAX / 2, "items in a constructor");
+  int isfunction = ls->t.token == TK_FUNCTION;
+  if (isfunction)
+    luaX_next(ls); /* skip the FUNCTION */
+  if (ls->t.token == TK_NAME || isfunction) {
+    luaY_checklimit(fs, cc->nh, INT_MAX, "items in a constructor");
     codename(ls, key);
   }
   else  /* ls->t.token == '[' */
     yindex(ls, key);
+  return isfunction;
 }
 
 
@@ -918,6 +924,7 @@ static void calldecors (LexState *ls, expdesc *t, expdesc *k, expdesc *v,
 static void recfield (LexState *ls, ConsControl *cc, decorstack *d) {
   /* recfield -> (NAME | '['exp']') = exp */
   FuncState *fs = ls->fs;
+  int isfunction;
   lu_byte reg = ls->fs->freereg;
   expdesc tab, key, val;
   if (d) {
@@ -928,17 +935,23 @@ static void recfield (LexState *ls, ConsControl *cc, decorstack *d) {
     adjustlocalvars(ls, 3); /* enter its scope */
   }
   /* get field key */
-  recfieldkey(ls, cc, &key);
+  isfunction = recfieldkey(ls, cc, &key);
   tab = *cc->t;
   if (d) {
     luaK_exp2nextreg(fs, &tab);
     luaK_exp2nextreg(fs, &key);
   }
   cc->nh++;
-  checknext(ls, '=');
+  if (!isfunction) {
+    checknext(ls, '=');
+  }
   luaK_indexed(fs, &tab, &key);
   /* evaluate value */
-  expr(ls, &val);
+  if (isfunction) {
+    body(ls, &val, 0, ls->linenumber);
+  } else {
+    expr(ls, &val);
+  }
   /* store result */
   if (d) {
     luaK_exp2nextreg(fs, &val);
@@ -996,6 +1009,13 @@ static void field (LexState *ls, ConsControl *cc, decorstack* d_prev) {
         listfield(ls, cc, d_prev);
       else
         recfield(ls, cc, d_prev);
+      break;
+    }
+    case TK_FUNCTION: {
+      if (luaX_lookahead(ls) == TK_NAME)
+        recfield(ls, cc);
+      else
+        listfield(ls, cc);
       break;
     }
     case '[': {
@@ -1122,6 +1142,33 @@ static void body (LexState *ls, expdesc *e, int ismethod, int line) {
 }
 
 
+static void simplebody (LexState *ls, expdesc *e, int line) {
+  /* simplebody -> parlist `|' expr END */
+  FuncState new_fs;
+  expdesc ebody;
+  BlockCnt bl;
+  new_fs.f = addprototype(ls);
+  new_fs.f->linedefined = line;
+  checknext(ls, '(');
+  open_func(ls, &new_fs, &bl);
+  parlist(ls);
+  checknext(ls, ')');
+  if (testnext(ls, TK_DO)) {
+    statlist(ls);
+    new_fs.f->lastlinedefined = ls->linenumber;
+    check_match(ls, TK_END, TK_DO, line);
+  } else {
+    int reg;
+    expr(ls, &ebody);
+    reg = luaK_exp2anyreg(&new_fs, &ebody);
+    luaK_ret(&new_fs, reg, 1);
+    new_fs.f->lastlinedefined = ls->linenumber;
+  }
+  codeclosure(ls, e);
+  close_func(ls);
+}
+
+
 static int explist (LexState *ls, expdesc *v) {
   /* explist -> expr { ',' expr } */
   int n = 1;  /* at least one expression */
@@ -1132,6 +1179,38 @@ static int explist (LexState *ls, expdesc *v) {
     n++;
   }
   return n;
+}
+
+
+static void simpleretstat (LexState *ls) {
+  /* simpleretstat -> RETURN [explist] [';'] */
+  FuncState *fs = ls->fs;
+  expdesc e;
+  int nret;  /* number of values being returned */
+  int first = luaY_nvarstack(fs);  /* first slot to be returned */
+  if (block_follow(ls, 1) || ls->t.token == ';')
+    nret = 0;  /* return no values */
+  else {
+    nret = 1;
+    expr(ls, &e);
+    if (hasmultret(e.k)) {
+      luaK_setmultret(fs, &e);
+      if (e.k == VCALL && nret == 1 && !fs->bl->insidetbc) {  /* tail call? */
+        SET_OPCODE(getinstruction(fs,&e), OP_TAILCALL);
+        lua_assert(GETARG_A(getinstruction(fs,&e)) == luaY_nvarstack(fs));
+      }
+      nret = LUA_MULTRET;  /* return all values */
+    }
+    else {
+      if (nret == 1)  /* only one single value? */
+        first = luaK_exp2anyreg(fs, &e);  /* can use original slot */
+      else {  /* values must go to the top of the stack */
+        luaK_exp2nextreg(fs, &e);
+        lua_assert(nret == fs->freereg - first);
+      }
+    }
+  }
+  luaK_ret(fs, first, nret);
 }
 
 
@@ -1159,6 +1238,11 @@ static void funcargs (LexState *ls, expdesc *f) {
     case TK_STRING: {  /* funcargs -> STRING */
       codestring(&args, ls->t.seminfo.ts);
       luaX_next(ls);  /* must use 'seminfo' before 'next' */
+      break;
+    }
+    case '$': {
+      luaX_next(ls);
+      simplebody(ls, &args, ls->linenumber);
       break;
     }
     default: {
@@ -1227,7 +1311,7 @@ static void suffixedexp (LexState *ls, expdesc *v) {
         funcargs(ls, v);
         break;
       }
-      case '(': case TK_STRING: case '{': {  /* funcargs */
+      case '(': case TK_STRING: case '{': case '$': {  /* funcargs */
         luaK_exp2nextreg(fs, v);
         funcargs(ls, v);
         break;
@@ -1284,6 +1368,11 @@ static void simpleexp (LexState *ls, expdesc *v) {
       body(ls, v, 0, ls->linenumber);
       return;
     }
+    case '$': {  /* lambda */
+      luaX_next(ls);
+      simplebody(ls, v, ls->linenumber);
+      return;
+    }
     default: {
       suffixedexp(ls, v);
       return;
@@ -1327,6 +1416,15 @@ static BinOpr getbinopr (int op) {
     case TK_GE: return OPR_GE;
     case TK_AND: return OPR_AND;
     case TK_OR: return OPR_OR;
+    case TK_PLUSEQ: return OPR_ADD;
+    case TK_MINUSEQ: return OPR_SUB;
+    case TK_MULTEQ: return OPR_MUL;
+    case TK_DIVEQ: return OPR_DIV;
+    case TK_SHLEQ: return OPR_SHL;
+    case TK_SHREQ: return OPR_SHR;
+    case TK_BANDEQ: return OPR_BAND;
+    case TK_BOREQ: return OPR_BOR;
+    case TK_BXOREQ: return OPR_BXOR;
     default: return OPR_NOBINOPR;
   }
 }
@@ -1466,12 +1564,50 @@ static void check_conflict (LexState *ls, struct LHS_assign *lh, expdesc *v) {
   }
 }
 
+static void compound_assignment(LexState *ls, expdesc* v) {
+  BinOpr op = getbinopr(ls->t.token);
+  FuncState *fs = ls->fs;
+  int tolevel = fs->nactvar;
+  int old_free = fs->freereg;
+  expdesc e, infix;
+  int line = ls->linenumber;
+  int nextra, i;
+  luaX_next(ls);
+  /* create temporary local variables to lock up any registers needed
+     by indexed lvalues. */
+  lu_byte top = fs->nactvar;
+  /* protect both the table and index result registers,
+     ensuring that they won't be overwritten prior to the
+     storevar calls. */
+  if (vkisindexed(v->k)) {
+    if (v->u.ind.t >= top)
+      top = v->u.ind.t + 1;
+    if (v->k == VINDEXED && v->u.ind.idx >= top)
+      top = v->u.ind.idx + 1;
+  }
+  nextra = top - fs->nactvar;
+  if (nextra) {
+    for (i=0; i < nextra; i++) {
+      new_localvarliteral(ls, "(temp)");
+    }
+    adjustlocalvars(ls,nextra);
+  }
+  infix = *v;
+  luaK_infix(fs, op, &infix);
+  expr(ls, &e);
+  luaK_posfix(fs, op, &infix, &e, line);
+  luaK_storevar(fs, v, &infix);
+  removevars(fs, tolevel);
+  if (old_free < fs->freereg)
+    fs->freereg = old_free;
+}
+
 /*
 ** Parse and compile a multiple assignment. The first "variable"
 ** (a 'suffixedexp') was already read by the caller.
 **
 ** assignment -> suffixedexp restassign
-** restassign -> ',' suffixedexp restassign | '=' explist
+** restassign -> ',' suffixedexp restassign | '=' explist | opeq expr
 */
 static void restassign (LexState *ls, struct LHS_assign *lh, int nvars,
                         expdesc *k, decorstack *d) {
@@ -1489,10 +1625,8 @@ static void restassign (LexState *ls, struct LHS_assign *lh, int nvars,
     restassign(ls, &nv, nvars+1, NULL, NULL);
     leavelevel(ls);
   }
-  else {  /* restassign -> '=' explist */
-    int nexps;
-    checknext(ls, '=');
-    nexps = explist(ls, &e);
+  else if (testnext(ls, '=')) {  /* restassign -> '=' explist */
+    int nexps = explist(ls, &e);
     if (nexps != nvars)
       adjust_assign(ls, nvars, nexps, &e);
     else {
@@ -1506,7 +1640,12 @@ static void restassign (LexState *ls, struct LHS_assign *lh, int nvars,
       return;  /* avoid default */
     }
   }
-  init_exp(&e, VNONRELOC, ls->fs->freereg-1);  /* default assignment */
+  else if ( ls->t.token >= TK_PLUSEQ && ls->t.token <= TK_BXOREQ ) { /* restassign -> opeq expr */
+    check_condition(ls, nvars == 1, "compound assignment not allowed on tuples");
+    compound_assignment(ls, &lh->v);
+    return;
+  }
+  init_exp(&e, VNONRELOC, ls->fs->freereg - 1);  /* default assignment */
   luaK_storevar(ls->fs, &lh->v, &e);
 }
 
@@ -2019,7 +2158,8 @@ static void exprstat (LexState *ls, decorstack *d) {
   else
     suffixedexp(ls, &v.v);
   /* stat -> assignment ? */
-  if (ls->t.token == '=' || ls->t.token == ',') {
+  if (ls->t.token == '=' || ls->t.token == ',' ||
+      (ls->t.token >= TK_PLUSEQ && ls->t.token <= TK_BXOREQ) ) {
     v.prev = NULL;
     restassign(ls, &v, 1, &k, d);
   }
