@@ -1,0 +1,448 @@
+﻿diff --git a/lparser.c b/lparser.c
+index 3ed52359..f9e1e4dc 100644
+--- a/lparser.c
++++ b/lparser.c
+@@ -469,16 +469,19 @@ static void singlevaraux (FuncState *fs, TString *n, expdesc *var, int base) {
+ ** Find a variable with the given name 'n', handling global variables
+ ** too.
+ */
+-static void singlevar (LexState *ls, expdesc *var) {
+-  TString *varname = str_checkname(ls);
++static void singlevar (LexState *ls, expdesc *var, TString **outvarname) {
++  TString *varname;
++  if (outvarname == NULL)
++    outvarname = &varname;
++  *outvarname = str_checkname(ls);
+   FuncState *fs = ls->fs;
+-  singlevaraux(fs, varname, var, 1);
++  singlevaraux(fs, *outvarname, var, 1);
+   if (var->k == VVOID) {  /* global name? */
+     expdesc key;
+     singlevaraux(fs, ls->envn, var, 1);  /* get environment variable */
+     lua_assert(var->k != VVOID);  /* this one must exist */
+     luaK_exp2anyregup(fs, var);  /* but could be a constant */
+-    codestring(&key, varname);  /* key is variable name */
++    codestring(&key, *outvarname);  /* key is variable name */
+     luaK_indexed(fs, var, &key);  /* env[varname] */
+   }
+ }
+@@ -822,7 +825,7 @@ static void fieldsel (LexState *ls, expdesc *v) {
+   /* fieldsel -> ['.' | ':'] NAME */
+   FuncState *fs = ls->fs;
+   expdesc key;
+-  luaK_exp2anyregup(fs, v);
++  luaK_exp2anyregup(ls->fs, v);
+   luaX_next(ls);  /* skip the dot or colon */
+   codename(ls, &key);
+   luaK_indexed(fs, v, &key);
+@@ -857,6 +860,19 @@ static void callfunc (LexState* ls, expdesc* f, expdesc* args) {
+ }
+ 
+ 
++typedef struct decorstack {
++  struct decorstack *prev;
++  expdesc e;
++} decorstack;
++
++
++static void applydecorstack (FuncState *fs, decorstack *d) {
++  if (d->prev)
++    applydecorstack(fs, d->prev);
++  luaK_exp2nextreg(fs, &d->e);
++}
++
++
+ /*
+ ** {======================================================================
+ ** Rules for Constructors
+@@ -884,20 +900,51 @@ static void recfieldkey(LexState *ls, ConsControl *cc, expdesc* key) {
+ }
+ 
+ 
++static void calldecors (LexState *ls, expdesc *t, expdesc *k, expdesc *v,
++                        decorstack *d) {
++  FuncState *fs = ls->fs;
++  do {
++    callfunc(ls, &d->e, v);
++    adjust_assign(ls, 3, 1, &d->e);
++    if (t && k) {
++      init_exp(t, VNONRELOC, fs->freereg-3);
++      init_exp(k, VNONRELOC, fs->freereg-2);
++    }
++    init_exp(v, VNONRELOC, fs->freereg-1);
++  } while (d = d->prev);
++}
++
++
+ static void recfield (LexState *ls, ConsControl *cc, decorstack *d) {
+   /* recfield -> (NAME | '['exp']') = exp */
+   FuncState *fs = ls->fs;
+   lu_byte reg = ls->fs->freereg;
+   expdesc tab, key, val;
++  if (d) {
++    applydecorstack(fs, d);
++    new_localvarliteral(ls, "(decor)");
++    new_localvarliteral(ls, "(decor)");
++    new_localvarliteral(ls, "(decor)");
++    adjustlocalvars(ls, 3); /* enter its scope */
++  }
+   /* get field key */
+   recfieldkey(ls, cc, &key);
+   tab = *cc->t;
++  if (d) {
++    luaK_exp2nextreg(fs, &tab);
++    luaK_exp2nextreg(fs, &key);
++  }
+   cc->nh++;
+   checknext(ls, '=');
+   luaK_indexed(fs, &tab, &key);
+   /* evaluate value */
+   expr(ls, &val);
+   /* store result */
++  if (d) {
++    luaK_exp2nextreg(fs, &val);
++    calldecors(ls, &tab, &key, &val, d);
++    luaK_indexed(fs, &tab, &key);
++  }
+   luaK_storevar(fs, &tab, &val);
+   fs->freereg = reg;  /* free registers */
+ }
+@@ -931,29 +978,40 @@ static void lastlistfield (FuncState *fs, ConsControl *cc) {
+ }
+ 
+ 
+-static void listfield (LexState *ls, ConsControl *cc) {
++static void listfield (LexState *ls, ConsControl *cc, decorstack *d) {
+   /* listfield -> exp */
+   expr(ls, &cc->v);
+   cc->tostore++;
+ }
+ 
+ 
+-static void field (LexState *ls, ConsControl *cc) {
++static void simpleexp (LexState *ls, expdesc *v);
++
++
++static void field (LexState *ls, ConsControl *cc, decorstack* d_prev) {
+   /* field -> listfield | recfield */
+   switch(ls->t.token) {
+     case TK_NAME: {  /* may be 'listfield' or 'recfield' */
+       if (luaX_lookahead(ls) != '=')  /* expression? */
+-        listfield(ls, cc);
++        listfield(ls, cc, d_prev);
+       else
+-        recfield(ls, cc);
++        recfield(ls, cc, d_prev);
+       break;
+     }
+     case '[': {
+-      recfield(ls, cc);
++      recfield(ls, cc, d_prev);
++      break;
++    }
++    case '@': {
++      decorstack d;
++      luaX_next(ls);
++      d.prev = d_prev;
++      simpleexp(ls, &d.e);
++      field(ls, cc, &d);
+       break;
+     }
+     default: {
+-      listfield(ls, cc);
++      listfield(ls, cc, d_prev);
+       break;
+     }
+   }
+@@ -995,7 +1053,7 @@ static void constructor (LexState *ls, expdesc *t) {
+     lua_assert(cc.v.k == VVOID || cc.tostore > 0);
+     if (ls->t.token == '}') break;
+     closelistfield(fs, &cc);
+-    field(ls, &cc);
++    field(ls, &cc, NULL);
+   } while (testnext(ls, ',') || testnext(ls, ';'));
+   check_match(ls, '}', '{', line);
+   lastlistfield(fs, &cc);
+@@ -1133,7 +1191,7 @@ static void primaryexp (LexState *ls, expdesc *v) {
+       return;
+     }
+     case TK_NAME: {
+-      singlevar(ls, v);
++      singlevar(ls, v, NULL);
+       return;
+     }
+     default: {
+@@ -1415,18 +1473,20 @@ static void check_conflict (LexState *ls, struct LHS_assign *lh, expdesc *v) {
+ ** assignment -> suffixedexp restassign
+ ** restassign -> ',' suffixedexp restassign | '=' explist
+ */
+-static void restassign (LexState *ls, struct LHS_assign *lh, int nvars) {
++static void restassign (LexState *ls, struct LHS_assign *lh, int nvars,
++                        expdesc *k, decorstack *d) {
+   expdesc e;
+-  check_condition(ls, vkisvar(lh->v.k), "syntax error");
+   check_readonly(ls, &lh->v);
+   if (testnext(ls, ',')) {  /* restassign -> ',' suffixedexp restassign */
+     struct LHS_assign nv;
+     nv.prev = lh;
++    if (d)
++      luaK_semerror(ls, "multiple decorated variables in list");
+     suffixedexp(ls, &nv.v);
+     if (!vkisindexed(nv.v.k))
+       check_conflict(ls, lh, &nv.v);
+     enterlevel(ls);  /* control recursion depth */
+-    restassign(ls, &nv, nvars+1);
++    restassign(ls, &nv, nvars+1, NULL, NULL);
+     leavelevel(ls);
+   }
+   else {  /* restassign -> '=' explist */
+@@ -1436,6 +1496,11 @@ static void restassign (LexState *ls, struct LHS_assign *lh, int nvars) {
+     if (nexps != nvars)
+       adjust_assign(ls, nvars, nexps, &e);
+     else {
++      if (d) {
++        luaK_exp2nextreg(ls->fs, &e);
++        calldecors(ls, &lh->v, k, &e, d);
++        luaK_indexed(ls->fs, &lh->v, k);
++      }
+       luaK_setoneret(ls->fs, &e);  /* close last expression */
+       luaK_storevar(ls->fs, &lh->v, &e);
+       return;  /* avoid default */
+@@ -1728,13 +1793,32 @@ static void ifstat (LexState *ls, int line) {
+ }
+ 
+ 
+-static void localfunc (LexState *ls) {
++static localdecorargs (LexState *ls, decorstack *d) {
++  FuncState *fs = ls->fs;
++  applydecorstack(fs, d);
++  luaK_nil(fs, fs->freereg, 2);
++  luaK_reserveregs(fs, 2);
++  new_localvarliteral(ls, "(decor)");
++  new_localvarliteral(ls, "(decor)");
++  adjustlocalvars(ls, 2);  /* enter its scope */
++}
++
++
++static void localfunc (LexState *ls, decorstack *d) {
+   expdesc b;
+   FuncState *fs = ls->fs;
+   int fvar = fs->nactvar;  /* function's variable index */
+-  new_localvar(ls, str_checkname(ls));  /* new local variable */
++  TString *name = str_checkname(ls);
++  if (d)
++    localdecorargs(ls, d);
++  new_localvar(ls, name);  /* new local variable */
+   adjustlocalvars(ls, 1);  /* enter its scope */
+   body(ls, &b, 0, ls->linenumber);  /* function created in next register */
++  if (d) {
++    luaK_exp2nextreg(fs, &b);
++    calldecors(ls, NULL, NULL, &b, d);
++    init_exp(&b, VNONRELOC, fs->freereg-1);
++  }
+   /* debug information will only see the variable after this point! */
+   localdebuginfo(fs, fvar)->startpc = fs->pc;
+ }
+@@ -1766,7 +1850,7 @@ static void checktoclose (FuncState *fs, int level) {
+ }
+ 
+ 
+-static void localstat (LexState *ls) {
++static void localstat (LexState *ls, decorstack *d) {
+   /* stat -> LOCAL NAME ATTRIB { ',' NAME ATTRIB } ['=' explist] */
+   FuncState *fs = ls->fs;
+   int toclose = -1;  /* index of to-be-closed variable (if any) */
+@@ -1778,6 +1862,8 @@ static void localstat (LexState *ls) {
+   do {
+     TString *vname = str_checkname(ls);
+     lu_byte kind = getlocalattribute(ls);
++    if (d)
++      localdecorargs(ls, d);
+     vidx = new_localvarkind(ls, vname, kind);
+     if (kind == RDKTOCLOSE) {  /* to-be-closed? */
+       if (toclose != -1)  /* one already present? */
+@@ -1792,6 +1878,8 @@ static void localstat (LexState *ls) {
+     e.k = VVOID;
+     nexps = 0;
+   }
++  if (d && nexps > 1)
++    luaK_semerror(ls, "multiple decorated variables in local list");
+   var = getlocalvardesc(fs, vidx);  /* get last variable */
+   if (nvars == nexps &&  /* no adjustments? */
+       var->vd.kind == RDKCONST &&  /* last variable is const? */
+@@ -1804,14 +1892,92 @@ static void localstat (LexState *ls) {
+     adjust_assign(ls, nvars, nexps, &e);
+     adjustlocalvars(ls, nvars);
+   }
++  if (d) {
++    calldecors(ls, NULL, NULL, &e, d);
++    init_exp(&e, VNONRELOC, fs->freereg-1);
++  }
+   checktoclose(fs, toclose);
+ }
+ 
+ 
++static int funcname (LexState *ls, expdesc *v);
++
++
++static int getdecorargs (LexState* ls, expdesc *t, expdesc *k) {
++  TString *varname;
++  int ismethod = 0;
++  FuncState *fs = ls->fs;
++  singlevar(ls, t, &varname);
++  if (ls->t.token == '.' || ls->t.token == ':') {
++    while (ls->t.token == '.' || (ismethod = ls->t.token == ':')) {
++      luaK_exp2anyregup(ls->fs, t);
++      luaX_next(ls);  /* skip the dot or colon */
++      codename(ls, k);
++      luaK_indexed(fs, t, k);
++      if (ismethod)
++        break;
++    }
++  } else {
++    singlevaraux(fs, ls->envn, t, 1);
++    codestring(k, varname);
++  }
++  return ismethod;
++}
++
++
++static int decorargs(LexState *ls, expdesc *t, expdesc *k, decorstack *d) {
++  FuncState *fs = ls->fs;
++  int ismethod;
++  applydecorstack(fs, d);
++  new_localvarliteral(ls, "(decor)");
++  new_localvarliteral(ls, "(decor)");
++  new_localvarliteral(ls, "(decor)");
++  adjustlocalvars(ls, 3);  /* enter its scope */
++  ismethod = getdecorargs(ls, t, k);
++  luaK_exp2nextreg(fs, t);
++  luaK_exp2nextreg(fs, k);
++  return ismethod;
++}
++
++static void funcstat (LexState *ls, decorstack *d, int line);
++static void exprstat (LexState *ls, decorstack *d);
++
++static void decorstat (LexState *ls, decorstack *d_prev, int line) {
++  FuncState *fs = ls->fs;
++  int base = fs->freereg;
++  decorstack d;
++  d.prev = d_prev;
++  simpleexp(ls, &d.e);
++  switch (ls->t.token) {
++    case TK_FUNCTION: {
++      funcstat(ls, &d, line);
++      break;
++    }
++    case TK_LOCAL: {
++      luaX_next(ls);  /* skip LOCAL */
++      if (testnext(ls, TK_FUNCTION))  /* local function? */
++        localfunc(ls, &d);
++      else
++        localstat(ls, &d);
++      break;
++    }
++    case '@': {  /* state -> decorstat */
++      luaX_next(ls);  /* skip @ */
++      decorstat(ls, &d, line);
++      break;
++    }
++    default: {
++      exprstat(ls, &d);
++      break;
++    }
++  }
++}
++
++
+ static int funcname (LexState *ls, expdesc *v) {
+   /* funcname -> NAME {fieldsel} [':' NAME] */
+   int ismethod = 0;
+-  singlevar(ls, v);
++  singlevar(ls, v, NULL);
+   while (ls->t.token == '.')
+     fieldsel(ls, v);
+   if (ls->t.token == ':') {
+@@ -1822,28 +1988,40 @@ static int funcname (LexState *ls, expdesc *v) {
+ }
+ 
+ 
+-static void funcstat (LexState *ls, int line) {
++void funcstat (LexState *ls, decorstack *d, int line) {
+   /* funcstat -> FUNCTION funcname body */
+   int ismethod;
+-  expdesc v, b;
+-  luaX_next(ls);  /* skip FUNCTION */
+-  ismethod = funcname(ls, &v);
++  expdesc v, k, b;
++  luaX_next(ls); /* skip FUNCTION */
++  if (d)
++    ismethod = decorargs(ls, &v, &k, d);
++  else
++    ismethod = funcname(ls, &v);
+   body(ls, &b, ismethod, line);
++  if (d) {
++    luaK_exp2nextreg(ls->fs, &b);
++    calldecors(ls, &v, &k, &b, d);
++    luaK_indexed(ls->fs, &v, &k);
++  }
+   check_readonly(ls, &v);
+   luaK_storevar(ls->fs, &v, &b);
+   luaK_fixline(ls->fs, line);  /* definition "happens" in the first line */
+ }
+ 
+ 
+-static void exprstat (LexState *ls) {
++static void exprstat (LexState *ls, decorstack *d) {
+   /* stat -> func | assignment */
+   FuncState *fs = ls->fs;
++  expdesc k;
+   struct LHS_assign v;
+-  suffixedexp(ls, &v.v);
++  if (d)
++    decorargs(ls, &v.v, &k, d);
++  else
++    suffixedexp(ls, &v.v);
+   /* stat -> assignment ? */
+   if (ls->t.token == '=' || ls->t.token == ',') {
+     v.prev = NULL;
+-    restassign(ls, &v, 1);
++    restassign(ls, &v, 1, &k, d);
+   }
+   else {  /* stat -> func */
+     Instruction *inst;
+@@ -1917,15 +2095,15 @@ static void statement (LexState *ls) {
+       break;
+     }
+     case TK_FUNCTION: {  /* stat -> funcstat */
+-      funcstat(ls, line);
++      funcstat(ls, NULL, line);
+       break;
+     }
+     case TK_LOCAL: {  /* stat -> localstat */
+       luaX_next(ls);  /* skip LOCAL */
+       if (testnext(ls, TK_FUNCTION))  /* local function? */
+-        localfunc(ls);
++        localfunc(ls, NULL);
+       else
+-        localstat(ls);
++        localstat(ls, NULL);
+       break;
+     }
+     case TK_DBCOLON: {  /* stat -> label */
+@@ -1947,8 +2125,13 @@ static void statement (LexState *ls) {
+       gotostat(ls);
+       break;
+     }
++    case '@': {  /* state -> decorstat */
++      luaX_next(ls);  /* skip @ */
++      decorstat(ls, NULL, line);
++      break;
++    }
+     default: {  /* stat -> func | assignment */
+-      exprstat(ls);
++      exprstat(ls, NULL);
+       break;
+     }
+   }

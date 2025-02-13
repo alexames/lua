@@ -1,0 +1,34 @@
+﻿diff --git a/lparser.c b/lparser.c
+index 2e97716e..e108ede9 100644
+--- a/lparser.c
++++ b/lparser.c
+@@ -1013,9 +1013,9 @@ static void field (LexState *ls, ConsControl *cc, decorstack* d_prev) {
+     }
+     case TK_FUNCTION: {
+       if (luaX_lookahead(ls) == TK_NAME)
+-        recfield(ls, cc);
++        recfield(ls, cc, d_prev);
+       else
+-        listfield(ls, cc);
++        listfield(ls, cc, d_prev);
+       break;
+     }
+     case '[': {
+diff --git a/testes/decorators.lua b/testes/decorators.lua
+index 70695276..7dc45f70 100644
+--- a/testes/decorators.lua
++++ b/testes/decorators.lua
+@@ -45,7 +45,13 @@ t = {
+   printhello = function()
+     print 'Hello!'
+   end,
++
++  @decorators.calltwice
++  function printhelloagain()
++    print 'Hello again!'
++  end,
+ }
+ 
+ print(t.x)
+ t.printhello()
++t.printhelloagain()

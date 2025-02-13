@@ -1,0 +1,75 @@
+﻿diff --git a/lparser.c b/lparser.c
+index 15839330..bb6864f8 100644
+--- a/lparser.c
++++ b/lparser.c
+@@ -43,6 +43,8 @@
+ #define eqstr(a,b)	((a) == (b))
+ 
+ 
++static void body(LexState *ls, expdesc *e, int ismethod, int line);
++
+ /*
+ ** nodes for block list (list of active blocks)
+ */
+@@ -854,30 +856,41 @@ typedef struct ConsControl {
+ } ConsControl;
+ 
+ 
+-static void recfieldkey(LexState *ls, ConsControl *cc, expdesc* key) {
++static int recfieldkey(LexState *ls, ConsControl *cc, expdesc* key) {
+   FuncState *fs = ls->fs;
+-  if (ls->t.token == TK_NAME) {
+-    luaY_checklimit(fs, cc->nh, INT_MAX / 2, "items in a constructor");
++  int isfunction = ls->t.token == TK_FUNCTION;
++  if (isfunction)
++    luaX_next(ls); /* skip the FUNCTION */
++  if (ls->t.token == TK_NAME || isfunction) {
++    luaY_checklimit(fs, cc->nh, INT_MAX, "items in a constructor");
+     codename(ls, key);
+   }
+   else  /* ls->t.token == '[' */
+     yindex(ls, key);
++  return isfunction;
+ }
+ 
+ 
+ static void recfield (LexState *ls, ConsControl *cc, decorstack *d) {
+   /* recfield -> (NAME | '['exp']') = exp */
+   FuncState *fs = ls->fs;
++  int isfunction;
+   lu_byte reg = ls->fs->freereg;
+   expdesc tab, key, val;
+   /* get field key */
+-  recfieldkey(ls, cc, &key);
++  isfunction = recfieldkey(ls, cc, &key);
+   tab = *cc->t;
+   cc->nh++;
+-  checknext(ls, '=');
++  if (!isfunction) {
++    checknext(ls, '=');
++  }
+   luaK_indexed(fs, &tab, &key);
+   /* evaluate value */
+-  expr(ls, &val);
++  if (isfunction) {
++    body(ls, &val, 0, ls->linenumber);
++  } else {
++    expr(ls, &val);
++  }
+   /* store result */
+   luaK_storevar(fs, &tab, &val);
+   fs->freereg = reg;  /* free registers */
+@@ -929,6 +942,13 @@ static void field (LexState *ls, ConsControl *cc) {
+         recfield(ls, cc);
+       break;
+     }
++    case TK_FUNCTION: {
++      if (luaX_lookahead(ls) == TK_NAME)
++        recfield(ls, cc);
++      else
++        listfield(ls, cc);
++      break;
++    }
+     case '[': {
+       recfield(ls, cc);
+       break;
