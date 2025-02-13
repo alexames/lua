@@ -1,0 +1,119 @@
+#
+# This workflow does a full Debug + Release build whenever
+# a change is pushed to master, or when a pull request is
+# created against master.
+#
+name: build_presubmit
+permissions: read-all
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  test_build_tools:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/linux_setup
+      - name: Lint and test Python build tools.
+        run: ./build_tools/lint_and_test_python_tools.sh
+      - name: Upload Python test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            build_tools/python_test_logs/**
+          retention-days: 3
+
+  find_changed_sdks:
+    runs-on: ubuntu-22.04
+    outputs:
+      cpp_changed: ${{ steps.check_sdks.outputs.cpp_changed }}
+      unity_changed: ${{ steps.check_sdks.outputs.unity_changed }}
+      unreal_changed: ${{ steps.check_sdks.outputs.unreal_changed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - uses: ./.github/actions/linux_setup
+      - name: Check SDKs
+        id: check_sdks
+        env:
+          # Required to list modified files using the GitHub API.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 ./build_tools/find_changed_sdks.py
+
+  cpp_sdk_linux:
+    runs-on: ubuntu-22.04
+    needs:
+      - test_build_tools
+      - find_changed_sdks
+    # Unreal depends on the cpp SDK, so build/test cpp if unreal changed.
+    if: ${{ needs.find_changed_sdks.outputs.cpp_changed == 'true' ||
+            needs.find_changed_sdks.outputs.unreal_changed == 'true' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/linux_setup
+      - name: Install Clang
+        run: |
+          sudo apt install clang
+      - name: Build debug with Clang
+        uses: ./.github/actions/build_sdk
+        with:
+          configs: Debug
+          sdk_repo_path: cpp
+          run_tests: true
+          extra_args: >-
+            --cmake_configure_args="-DCMAKE_CXX_COMPILER=clang++"
+            --cmake_configure_args="-DCMAKE_C_COMPILER=clang"
+
+  unity_sdk_windows:
+    runs-on: windows-2019
+    needs:
+      - test_build_tools
+      - find_changed_sdks
+    if: needs.find_changed_sdks.outputs.unity_changed == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/windows_setup
+      - name: Build release
+        uses: ./.github/actions/build_sdk
+        with:
+          configs: Release
+          sdk_repo_path: unity
+          run_tests: true
+
+  unreal_sdk_linux:
+    runs-on: ubuntu-22.04
+    env:
+      CPP_SDK_DIR: artifacts/input/linux
+    needs:
+      - find_changed_sdks
+      - cpp_sdk_linux
+    if: needs.find_changed_sdks.outputs.unreal_changed == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/linux_setup
+      - uses: actions/download-artifact@v4
+        with:
+          name: cpp_sdk_linux_artifacts
+          path: artifacts/input
+      - name: Extract prebuilt SDK
+        shell: bash
+        run: |
+          mkdir -p ${{ env.CPP_SDK_DIR }} && \
+          unzip -d ${{ env.CPP_SDK_DIR }} artifacts/input/*.zip
+      - name: Build release
+        uses: ./.github/actions/build_sdk
+        with:
+          configs: Release
+          sdk_repo_path: unreal
+          run_tests: true
+          extra_args: --cmake_configure_args="-DAGENTIC_UNREAL_SDK_CPP_PACKAGED_DIR=${{ env.CPP_SDK_DIR }}"
