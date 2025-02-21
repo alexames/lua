@@ -376,6 +376,46 @@ target_link_libraries(${LUA_INTERPRETER_TARGET}
 )
 
 ################################################################################
+# Testing
+
+include(lua_test)
+#add_lua_test(all "all.lua")
+add_lua_test(main "main.lua")
+# add_lua_test(api "${LUA_SOURCE_DIR}/api.lua")
+# add_lua_test(attrib "${LUA_SOURCE_DIR}/attrib.lua")
+# add_lua_test(big "${LUA_SOURCE_DIR}/big.lua")
+# add_lua_test(bitwise "${LUA_SOURCE_DIR}/bitwise.lua")
+# add_lua_test(bwcoercion "${LUA_SOURCE_DIR}/bwcoercion.lua")
+# add_lua_test(calls "${LUA_SOURCE_DIR}/calls.lua")
+# add_lua_test(closure "${LUA_SOURCE_DIR}/closure.lua")
+# add_lua_test(code "${LUA_SOURCE_DIR}/code.lua")
+# add_lua_test(constructs "${LUA_SOURCE_DIR}/constructs.lua")
+# add_lua_test(coroutine "${LUA_SOURCE_DIR}/coroutine.lua")
+# add_lua_test(cstack "${LUA_SOURCE_DIR}/cstack.lua")
+# add_lua_test(db "${LUA_SOURCE_DIR}/db.lua")
+# add_lua_test(errors "${LUA_SOURCE_DIR}/errors.lua")
+# add_lua_test(events "${LUA_SOURCE_DIR}/events.lua")
+# add_lua_test(files "${LUA_SOURCE_DIR}/files.lua")
+# add_lua_test(gc "${LUA_SOURCE_DIR}/gc.lua")
+# add_lua_test(gengc "${LUA_SOURCE_DIR}/gengc.lua")
+# add_lua_test(goto "${LUA_SOURCE_DIR}/goto.lua")
+# add_lua_test(heavy "${LUA_SOURCE_DIR}/heavy.lua")
+# add_lua_test(literals "${LUA_SOURCE_DIR}/literals.lua")
+# add_lua_test(locals "${LUA_SOURCE_DIR}/locals.lua")
+# add_lua_test(main "${LUA_SOURCE_DIR}/main.lua")
+# add_lua_test(math "${LUA_SOURCE_DIR}/math.lua")
+# add_lua_test(nextvar "${LUA_SOURCE_DIR}/nextvar.lua")
+# add_lua_test(packtests "${LUA_SOURCE_DIR}/packtests")
+# add_lua_test(pm "${LUA_SOURCE_DIR}/pm.lua")
+# add_lua_test(sort "${LUA_SOURCE_DIR}/sort.lua")
+# add_lua_test(strings "${LUA_SOURCE_DIR}/strings.lua")
+# add_lua_test(tpack "${LUA_SOURCE_DIR}/tpack.lua")
+# add_lua_test(tracegc "${LUA_SOURCE_DIR}/tracegc.lua")
+# add_lua_test(utf8 "${LUA_SOURCE_DIR}/utf8.lua")
+# add_lua_test(vararg "${LUA_SOURCE_DIR}/vararg.lua")
+# add_lua_test(verybig "${LUA_SOURCE_DIR}/verybig.lua")
+
+################################################################################
 # Installation
 
 include(CMakePackageConfigHelpers)
