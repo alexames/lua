@@ -8,38 +8,31 @@
 cmake_minimum_required(VERSION 3.11)
 
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
+set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
 
 set(LUA_PROJECT_NAME "lua" CACHE STRING "The name of the project itself.")
 
 set(LUA_REPOSITORY "${CMAKE_CURRENT_LIST_DIR}" CACHE STRING "The Git repo containing the Lua source code.")
 set(LUA_REF "master" CACHE STRING "The branch in the Git repo to use when building.")
 
-################################################################################
 # Source repository set up.
-
-set(LUA_FETCH_CONTENT_NAME "${LUA_PROJECT_NAME}-${LUA_REF}")
-# Target names cannot contain '/' characters, which sometimes appear in branch names.
-string(REPLACE "/" "-" LUA_FETCH_CONTENT_NAME "${LUA_FETCH_CONTENT_NAME}")
-
-# Fetch the content from the Lua repository.
-include(FetchContent)
-FetchContent_Declare(
-    "${LUA_FETCH_CONTENT_NAME}"
-    GIT_REPOSITORY "${LUA_REPOSITORY}"
-    GIT_TAG "${LUA_REF}"
-)
-FetchContent_MakeAvailable("${LUA_FETCH_CONTENT_NAME}")
-set(LUA_SOURCE_DIR "${${LUA_FETCH_CONTENT_NAME}_SOURCE_DIR}")
+include(fetch_lua)
+fetch_lua(LUA_SOURCE_DIR ${LUA_PROJECT_NAME} ${LUA_REPOSITORY} ${LUA_REF})
 
 ################################################################################
 # Configuration settings.
 
 set(LUA_LANGUAGE_CPP FALSE CACHE BOOL "Compile the library in C++")
-set(LUA_CONF_32BITS FALSE CACHE BOOL "Enables Lua with 32-bit integers and 32-bit floats.")
-set(LUA_CONF_USE_C89 FALSE CACHE BOOL "Controls the use of non-ISO-C89 features. Define it if you want Lua to avoid the use of a few C99 features or Windows-specific features on Windows.")
-set(LUA_CONF_COERSION_TO_STRING TRUE CACHE BOOL "Control how Lua performs some coercions. If ON, turns on automatic coercion from strings to numbers.")
-set(LUA_CONF_COERSION_TO_NUMBER TRUE CACHE BOOL "Control how Lua performs some coercions. If ON, turns on automatic coercion from numbers to strings.")
-set(LUA_CONF_USE_APICHECK FALSE CACHE BOOL "Turns on several consistency checks on the C API. Define it as a help when debugging C code.")
+set(LUA_CONF_32BITS FALSE CACHE BOOL 
+    "Enables Lua with 32-bit integers and 32-bit floats.")
+set(LUA_CONF_USE_C89 FALSE CACHE BOOL 
+    "Controls the use of non-ISO-C89 features. Define it if you want Lua to avoid the use of a few C99 features or Windows-specific features on Windows.")
+set(LUA_CONF_COERSION_TO_STRING TRUE CACHE BOOL 
+    "Control how Lua performs some coercions. If ON, turns on automatic coercion from strings to numbers.")
+set(LUA_CONF_COERSION_TO_NUMBER TRUE CACHE BOOL 
+    "Control how Lua performs some coercions. If ON, turns on automatic coercion from numbers to strings.")
+set(LUA_CONF_USE_APICHECK FALSE CACHE BOOL 
+    "Turns on several consistency checks on the C API. Define it as a help when debugging C code.")
 
 set(LUA_BUILD_TESTS TRUE CACHE BOOL "Generate targets to run each test.")
 
@@ -50,46 +43,22 @@ set(LUA_EXTENSION_COMPOUND_OPERATOR FALSE CACHE BOOL "")
 set(LUA_EXTENSION_NAMED_TABLE_FUNCTIONS FALSE CACHE BOOL "")
 set(LUA_EXTENSION_DECORATORS FALSE CACHE BOOL "")
 set(LUA_EXTENSION_LAMBDA FALSE CACHE BOOL "")
-set(LUA_EXTENSION_NATVIS FALSE CACHE BOOL "")
 
 ################################################################################
 # Files
 
-file(READ "${LUA_SOURCE_DIR}/lua.h" LUA_H)
+include(derive_lua_version)
+derive_lua_version(LUA_VERSION ${LUA_SOURCE_DIR})
 
-set(LUA_VERSION_REGEX
-    "#define[ \t]+LUA_VERSION[ \t]+\"Lua ([0-9]).([0-9])\"")
-set(LUA_VERSION_MAJOR_REGEX
-    "#define[ \t]+(LUA_VERSION_MAJOR|LUA_VERSION_MAJOR_N)?[ \t]+\"?([0-9])\"?")
-set(LUA_VERSION_MINOR_REGEX
-    "#define[ \t]+(LUA_VERSION_MINOR|LUA_VERSION_MINOR_N)?[ \t]+\"?([0-9])\"?")
-
-string(REGEX MATCH "${LUA_VERSION_REGEX}" result "${LUA_H}")
-
-if(result)
-    set(LUA_VERSION_MAJOR "${CMAKE_MATCH_1}")
-    set(LUA_VERSION_MINOR "${CMAKE_MATCH_2}")
-else()
-    string(REGEX MATCH "${LUA_VERSION_MAJOR_REGEX}" _ "${LUA_H}")
-    set(LUA_VERSION_MAJOR "${CMAKE_MATCH_2}")
-
-    string(REGEX MATCH "${LUA_VERSION_MINOR_REGEX}" _ "${LUA_H}")
-    set(LUA_VERSION_MINOR "${CMAKE_MATCH_2}")
-endif()
-
-set(LUA_VERSION "${LUA_VERSION_MAJOR}.${LUA_VERSION_MINOR}")
-set(LUA_LIBRARY_NAME "${LUA_PROJECT_NAME}${LUA_VERSION}")
-set(LUA_INTERPRETER_NAME "${LUA_PROJECT_NAME}${LUA_VERSION}")
+set(LUA_LIBRARY_NAME "${LUA_PROJECT_NAME}${LUA_VERSION}" CACHE STRING
+    "The name of the Lua library to be built.")
+set(LUA_INTERPRETER_NAME "${LUA_PROJECT_NAME}${LUA_VERSION}" CACHE STRING
+    "The name of the Lua interpreter to be built.")
 
 project(${LUA_PROJECT_NAME}
     VERSION ${LUA_VERSION}
     LANGUAGES CXX C
 )
-
-if(EXISTS "${LUA_SOURCE_DIR}/CMakeLists.txt")
-    message(STATUS "Deferring to CMakeLists.txt provided by Lua revision.")
-    return()
-endif()
 
 set(LUA_PUBLIC_HEADERS
     "${LUA_SOURCE_DIR}/lauxlib.h"
@@ -152,6 +121,10 @@ set(LUA_LIBRARY_HEADERS
     "${LUA_SOURCE_DIR}/lzio.h"
 )
 
+set(LUA_INTERPRETER_SOURCES
+    "${LUA_SOURCE_DIR}/lua.c"
+)
+
 if (LUA_VERSION VERSION_GREATER_EQUAL 5.1)
     list(APPEND LUA_MODULE_SOURCES "${LUA_SOURCE_DIR}/loslib.c")
     list(APPEND LUA_PUBLIC_HEADERS "${LUA_SOURCE_DIR}/luaconf.h")
@@ -172,10 +145,6 @@ if (LUA_VERSION VERSION_GREATER_EQUAL 5.4)
     list(APPEND LUA_LIBRARY_HEADERS "${LUA_SOURCE_DIR}/ljumptab.h")
     list(APPEND LUA_LIBRARY_HEADERS "${LUA_SOURCE_DIR}/lopnames.h")
 endif()
-
-set(LUA_INTERPRETER_SOURCES
-    "${LUA_SOURCE_DIR}/lua.c"
-)
 
 source_group("Public Headers" FILES ${LUA_PUBLIC_HEADERS})
 source_group("Modules" FILES ${LUA_MODULE_SOURCES})
@@ -208,8 +177,6 @@ endif()
 
 ################################################################################
 # Apply patches.
-
-set(LUA_EXTENSION_NATVIS FALSE CACHE BOOL "")
 
 unset(LUA_PATCHES)
 
