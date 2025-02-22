@@ -328,18 +328,11 @@ add_library(${LUA_LIBRARY_TARGET} SHARED
     ${LUA_LIBRARY_HEADERS}
 )
 
-if(MSVC)
-    target_sources(${LUA_LIBRARY_TARGET}
-        PUBLIC
-            $<BUILD_INTERFACE:${LUA_NATVIS}>
-    )
-endif()
-
 add_library(${LUA_PROJECT_NAME}::${LUA_PROJECT_NAME} ALIAS ${LUA_LIBRARY_TARGET})
 target_include_directories(${LUA_LIBRARY_TARGET}
     PUBLIC
-        $<BUILD_INTERFACE:${LUA_SOURCE_DIR}>
-        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/${LUA_PROJECT_NAME}${LUA_VERSION}>
+        "$<BUILD_INTERFACE:${LUA_SOURCE_DIR}>"
+        "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/${LUA_PROJECT_NAME}${LUA_VERSION}>"
 )
 target_compile_definitions(${LUA_LIBRARY_TARGET}
     PUBLIC
@@ -387,11 +380,11 @@ include(lua_test)
 
 if(LUA_BUILD_TESTS)
     set(LUA_TEST_SOURCE_DIR "${LUA_SOURCE_DIR}/testes/libs")
-    add_lua_test_library(lib1 "${LUA_TEST_SOURCE_DIR}/lib1.c")
-    add_lua_test_library(lib11 "${LUA_TEST_SOURCE_DIR}/lib11.c")
-    add_lua_test_library(lib2 "${LUA_TEST_SOURCE_DIR}/lib2.c")
-    add_lua_test_library(lib21 "${LUA_TEST_SOURCE_DIR}/lib21.c")
-    add_lua_test_library(lib2-v2 "${LUA_TEST_SOURCE_DIR}/lib22.c")
+    add_lua_test_library(lib1 "${LUA_TEST_SOURCE_DIR}/lib1.c" "")
+    add_lua_test_library(lib11 "${LUA_TEST_SOURCE_DIR}/lib11.c" lib1)
+    add_lua_test_library(lib2 "${LUA_TEST_SOURCE_DIR}/lib2.c" "")
+    add_lua_test_library(lib21 "${LUA_TEST_SOURCE_DIR}/lib21.c" lib2)
+    add_lua_test_library(lib2-v2 "${LUA_TEST_SOURCE_DIR}/lib22.c" lib2)
 
     function(add_lua_test name basic)
         file(GLOB_RECURSE lua_test_sources "${LUA_SOURCE_DIR}/testes/*")
