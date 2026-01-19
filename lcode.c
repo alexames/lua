@@ -1755,6 +1755,14 @@ void luaK_infix (FuncState *fs, BinOpr op, expdesc *v) {
       /* else keep numeral, which may be an immediate operand */
       break;
     }
+    case OPR_PIPE: {
+      /* For pipe operator: put LHS in a register BEFORE RHS is parsed.
+      ** This is critical because the RHS (e.g., inline function) will be
+      ** compiled and placed in the next available register during parsing.
+      ** We need the LHS to be safely stored first. */
+      luaK_exp2nextreg(fs, v);
+      break;
+    }
     default: lua_assert(0);
   }
 }
@@ -1786,7 +1794,9 @@ static void codeconcat (FuncState *fs, expdesc *e1, expdesc *e2, int line) {
 */
 void luaK_posfix (FuncState *fs, BinOpr opr,
                   expdesc *e1, expdesc *e2, int line) {
-  luaK_dischargevars(fs, e2);
+  /* Pipe operator handles e2 discharge itself to control instruction order */
+  if (opr != OPR_PIPE)
+    luaK_dischargevars(fs, e2);
   if (foldbinop(opr) && constfolding(fs, cast_int(opr + LUA_OPADD), e1, e2))
     return;  /* done by folding */
   switch (opr) {
@@ -1854,6 +1864,38 @@ void luaK_posfix (FuncState *fs, BinOpr opr,
     }  /* FALLTHROUGH */
     case OPR_LT: case OPR_LE: {
       codeorder(fs, opr, e1, e2);
+      break;
+    }
+    case OPR_PIPE: {
+      int lhs_reg, func_reg, base;
+      lua_assert(e1->k == VNONRELOC);
+      lhs_reg = e1->u.info;
+      luaK_dischargevars(fs, e2);
+      func_reg = luaK_exp2anyreg(fs, e2);
+      base = lhs_reg;
+      if (fs->freereg < base + 2)
+        luaK_reserveregs(fs, (base + 2) - fs->freereg);
+      if (func_reg == base + 1) {
+        /* Case 1: func is in the arg slot. Use a temp. */
+        int temp = fs->freereg;
+        luaK_reserveregs(fs, 1);  /* reserve a temp */
+        luaK_codeABC(fs, OP_MOVE, temp, lhs_reg, 0);  /* save LHS to temp */
+        luaK_codeABC(fs, OP_MOVE, base, func_reg, 0);  /* move func to base */
+        luaK_codeABC(fs, OP_MOVE, base + 1, temp, 0);  /* move LHS from temp to arg slot */
+      }
+      else {
+        /* Case 2: copy LHS to arg slot FIRST (before overwriting base with func) */
+        luaK_codeABC(fs, OP_MOVE, base + 1, lhs_reg, 0);  /* copy LHS to arg slot */
+        if (func_reg != base)
+          luaK_codeABC(fs, OP_MOVE, base, func_reg, 0);  /* copy func to base */
+      }
+      /* Emit call: 1 arg (B=2), 1 result (C=2, adjusted later if needed) */
+      fs->freereg = cast_byte(base + 2);
+      e1->f = e1->t = NO_JUMP;
+      e1->k = VCALL;
+      e1->u.info = luaK_codeABC(fs, OP_CALL, base, 2, 2);
+      luaK_fixline(fs, line);
+      fs->freereg = cast_byte(base + 1);
       break;
     }
     default: lua_assert(0);
