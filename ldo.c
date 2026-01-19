@@ -1146,17 +1146,24 @@ TStatus luaD_protectedparser (lua_State *L, ZIO *z, const char *name,
                                             const char *mode) {
   struct SParser p;
   TStatus status;
+  int i;
   incnny(L);  /* cannot yield during parsing */
   p.z = z; p.name = name; p.mode = mode;
   p.dyd.actvar.arr = NULL; p.dyd.actvar.size = 0;
   p.dyd.gt.arr = NULL; p.dyd.gt.size = 0;
   p.dyd.label.arr = NULL; p.dyd.label.size = 0;
+  p.dyd.bindings.arr = NULL; p.dyd.bindings.size = 0; p.dyd.bindings.n = 0;
   luaZ_initbuffer(L, &p.buff);
   status = luaD_pcall(L, f_parser, &p, savestack(L, L->top.p), L->errfunc);
   luaZ_freebuffer(L, &p.buff);
   luaM_freearray(L, p.dyd.actvar.arr, cast_sizet(p.dyd.actvar.size));
   luaM_freearray(L, p.dyd.gt.arr, cast_sizet(p.dyd.gt.size));
   luaM_freearray(L, p.dyd.label.arr, cast_sizet(p.dyd.label.size));
+  /* Free any bindings arrays that weren't cleaned up (e.g., on parse error) */
+  for (i = 0; i < p.dyd.bindings.n; i++) {
+    luaM_freemem(L, p.dyd.bindings.arr[i].ptr, p.dyd.bindings.arr[i].size);
+  }
+  luaM_freearray(L, p.dyd.bindings.arr, cast_sizet(p.dyd.bindings.size));
   decnny(L);
   return status;
 }

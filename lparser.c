@@ -34,6 +34,9 @@
    smaller than 250, due to the bytecode format) */
 #define MAXVARS		200
 
+/* maximum number of fields in a destructuring pattern */
+#define MAX_DESTRUCT_FIELDS  50
+
 
 #define hasmultret(k)		((k) == VCALL || (k) == VVARARG)
 
@@ -56,6 +59,131 @@ typedef struct BlockCnt {
   lu_byte insidetbc;  /* true if inside the scope of a to-be-closed var. */
 } BlockCnt;
 
+
+/*
+** Structures for destructuring patterns.
+** A DestructField represents one field extraction: {fieldname = localname}
+** or {fieldname = {nested pattern}}.
+*/
+typedef struct DestructPattern DestructPattern;
+
+typedef struct DestructField {
+  TString *fieldname;        /* key to extract from source table */
+  TString *localname;        /* name of local to bind (NULL if nested) */
+  DestructPattern *nested;   /* nested pattern, or NULL for simple field */
+} DestructField;
+
+struct DestructPattern {
+  DestructField fields[MAX_DESTRUCT_FIELDS];
+  int nfields;
+};
+
+/*
+** A Binding represents one element in a binding list.
+** Either a simple name or a destructuring pattern.
+*/
+typedef struct Binding {
+  TString *name;             /* for simple names (NULL if pattern) */
+  DestructPattern *pattern;  /* for patterns (NULL if simple name) */
+} Binding;
+
+/*
+** BindingList holds bindings parsed from a local/for/param declaration.
+*/
+typedef struct BindingList {
+  Binding *bindings;         /* dynamically allocated array, or NULL */
+  int nbindings;
+  int capacity;
+} BindingList;
+
+
+/*
+** Initialize an empty binding list (no allocation until needed)
+*/
+static void initbindings(BindingList *bl) {
+  bl->bindings = NULL;
+  bl->nbindings = 0;
+  bl->capacity = 0;
+}
+
+
+/*
+** Register a bindings allocation with dyd for cleanup on parse error.
+*/
+static void registerbindings(LexState *ls, Binding *ptr, size_t size) {
+  Dyndata *dyd = ls->dyd;
+  int n = dyd->bindings.n;
+  if (n >= dyd->bindings.size) {
+    int newsize = (dyd->bindings.size == 0) ? 4 : dyd->bindings.size * 2;
+    dyd->bindings.arr = luaM_reallocvector(ls->L, dyd->bindings.arr,
+                                            dyd->bindings.size, newsize,
+                                            BindingsEntry);
+    dyd->bindings.size = newsize;
+  }
+  dyd->bindings.arr[n].ptr = ptr;
+  dyd->bindings.arr[n].size = size;
+  dyd->bindings.n = n + 1;
+}
+
+
+/*
+** Unregister a bindings allocation from dyd (called when properly freed).
+*/
+static void unregisterbindings(LexState *ls, Binding *ptr) {
+  Dyndata *dyd = ls->dyd;
+  int i;
+  for (i = dyd->bindings.n - 1; i >= 0; i--) {
+    if (dyd->bindings.arr[i].ptr == ptr) {
+      /* Remove by shifting remaining entries down */
+      dyd->bindings.n--;
+      for (; i < dyd->bindings.n; i++) {
+        dyd->bindings.arr[i] = dyd->bindings.arr[i + 1];
+      }
+      return;
+    }
+  }
+}
+
+
+/*
+** Ensure the binding list has room for at least one more binding.
+*/
+static void growbindings(LexState *ls, BindingList *bl) {
+  if (bl->nbindings >= bl->capacity) {
+    int newcap = (bl->capacity == 0) ? 4 : bl->capacity * 2;
+    Binding *oldptr = bl->bindings;
+    bl->bindings = luaM_reallocvector(ls->L, bl->bindings,
+                                       bl->capacity, newcap, Binding);
+    /* Update registration: unregister old, register new */
+    if (oldptr != NULL)
+      unregisterbindings(ls, oldptr);
+    registerbindings(ls, bl->bindings, cast_sizet(newcap) * sizeof(Binding));
+    bl->capacity = newcap;
+  }
+}
+
+
+/*
+** Add a simple name binding (no destructuring)
+*/
+static void addsimplebinding(LexState *ls, BindingList *bl, TString *name) {
+  growbindings(ls, bl);
+  bl->bindings[bl->nbindings].name = name;
+  bl->bindings[bl->nbindings].pattern = NULL;
+  bl->nbindings++;
+}
+
+
+/*
+** Add a destructuring pattern binding
+*/
+static void addpatternbinding(LexState *ls, BindingList *bl,
+                              DestructPattern *pattern) {
+  growbindings(ls, bl);
+  bl->bindings[bl->nbindings].name = NULL;
+  bl->bindings[bl->nbindings].pattern = pattern;
+  bl->nbindings++;
+}
 
 
 /*
@@ -349,6 +477,159 @@ static void removevars (FuncState *fs, int tolevel) {
     LocVar *var = localdebuginfo(fs, --fs->nactvar);
     if (var)  /* does it have debug information? */
       var->endpc = fs->pc;
+  }
+}
+
+
+/*
+** ======================================================================
+** Destructuring pattern support
+** ======================================================================
+*/
+
+/* forward declaration */
+static void parsepattern (LexState *ls, DestructPattern *pat);
+
+
+/*
+** Parse a single field in a destructuring pattern.
+** field ::= NAME | NAME '=' NAME | NAME '=' destructure
+**
+** Interpretation:
+**   {x}         - shorthand: local 'x' from field "x"
+**   {real = x}  - rename: local 'real' from field "x" (left=local, right=field)
+**   {pos = {...}} - nested: from field "pos", destructure with nested pattern
+*/
+static void parsefield (LexState *ls, DestructField *field) {
+  TString *name = str_checkname(ls);  /* first name */
+  field->nested = NULL;
+  if (testnext(ls, '=')) {
+    /* NAME '=' something */
+    if (ls->t.token == '{') {
+      /* NAME '=' destructure - nested pattern: NAME is field to extract */
+      field->fieldname = name;
+      field->localname = NULL;
+      field->nested = luaM_new(ls->L, DestructPattern);
+      parsepattern(ls, field->nested);
+    }
+    else {
+      /* NAME '=' NAME - rename: left is local, right is field */
+      field->localname = name;
+      field->fieldname = str_checkname(ls);
+    }
+  }
+  else {
+    /* Shorthand: NAME is both local and field */
+    field->localname = name;
+    field->fieldname = name;
+  }
+}
+
+
+/*
+** Parse a destructuring pattern.
+** destructure ::= '{' fields? '}'
+** fields ::= field (',' field)* (',')?
+*/
+static void parsepattern (LexState *ls, DestructPattern *pat) {
+  int line = ls->linenumber;
+  pat->nfields = 0;
+  checknext(ls, '{');
+  if (ls->t.token != '}') {
+    do {
+      if (pat->nfields >= MAX_DESTRUCT_FIELDS)
+        luaX_syntaxerror(ls, "too many fields in destructuring pattern");
+      parsefield(ls, &pat->fields[pat->nfields]);
+      pat->nfields++;
+    } while (testnext(ls, ',') && ls->t.token != '}');
+  }
+  check_match(ls, '}', '{', line);
+}
+
+
+/*
+** Free nested patterns allocated during parsing.
+** This must be called when the BindingList goes out of scope.
+*/
+static void freepattern (lua_State *L, DestructPattern *pat) {
+  int i;
+  for (i = 0; i < pat->nfields; i++) {
+    if (pat->fields[i].nested != NULL) {
+      freepattern(L, pat->fields[i].nested);
+      luaM_free(L, pat->fields[i].nested);
+    }
+  }
+}
+
+
+static void freebindings (LexState *ls, BindingList *bl) {
+  lua_State *L = ls->L;
+  int i;
+  for (i = 0; i < bl->nbindings; i++) {
+    if (bl->bindings[i].pattern != NULL) {
+      freepattern(L, bl->bindings[i].pattern);
+      luaM_free(L, bl->bindings[i].pattern);
+    }
+  }
+  if (bl->bindings != NULL) {
+    unregisterbindings(ls, bl->bindings);
+    luaM_freearray(L, bl->bindings, bl->capacity);
+  }
+}
+
+
+/*
+** Create hidden local variables for all locals in a pattern.
+** Returns the number of locals created.
+*/
+static int createpatternlocals (LexState *ls, DestructPattern *pat) {
+  int count = 0;
+  int i;
+  for (i = 0; i < pat->nfields; i++) {
+    if (pat->fields[i].nested != NULL) {
+      count += createpatternlocals(ls, pat->fields[i].nested);
+    }
+    else {
+      new_localvar(ls, pat->fields[i].localname);
+      count++;
+    }
+  }
+  return count;
+}
+
+
+/*
+** Emit code to extract fields from a source register into locals.
+** 'srcreg' is the register holding the source table.
+** The locals should already exist and be in scope.
+** 'localidx' points to the current local variable index being assigned;
+** it is updated as locals are assigned.
+*/
+static void emitpatternextractions (LexState *ls, DestructPattern *pat,
+                                    int srcreg, int *localidx) {
+  FuncState *fs = ls->fs;
+  int i;
+  for (i = 0; i < pat->nfields; i++) {
+    DestructField *field = &pat->fields[i];
+    expdesc src, key;
+    /* Create expression for source[fieldname] */
+    init_exp(&src, VNONRELOC, srcreg);
+    codestring(&key, field->fieldname);
+    luaK_indexed(fs, &src, &key);
+    if (field->nested != NULL) {
+      /* Nested pattern: extract to a temp, then recurse */
+      luaK_exp2nextreg(fs, &src);  /* put value in next free register */
+      /* After exp2nextreg, src is VNONRELOC at (freereg - 1) */
+      emitpatternextractions(ls, field->nested, fs->freereg - 1, localidx);
+      fs->freereg--;  /* free the temp register we just used */
+    }
+    else {
+      /* Simple field: store into the local */
+      expdesc var;
+      init_var(fs, &var, *localidx);
+      luaK_storevar(fs, &var, &src);
+      (*localidx)++;
+    }
   }
 }
 
@@ -1063,16 +1344,35 @@ static void setvararg (FuncState *fs) {
 
 
 static void parlist (LexState *ls) {
-  /* parlist -> [ {NAME ','} (NAME | '...') ] */
+  /* parlist -> [ {param ','} (param | '...') ]
+     param -> NAME | '{' fields '}' */
   FuncState *fs = ls->fs;
   Proto *f = fs->f;
   int nparams = 0;
   int varargk = 0;
+  BindingList bindings;
+  int basevar;
+  int i;
+  int haspatterns = 0;
+  initbindings(&bindings);
+  basevar = fs->nactvar;  /* first parameter variable index */
   if (ls->t.token != ')') {  /* is 'parlist' not empty? */
     do {
       switch (ls->t.token) {
         case TK_NAME: {
-          new_localvar(ls, str_checkname(ls));
+          TString *name = str_checkname(ls);
+          if (haspatterns)  /* only track bindings if we have patterns */
+            addsimplebinding(ls, &bindings, name);
+          new_localvar(ls, name);
+          nparams++;
+          break;
+        }
+        case '{': {
+          DestructPattern *pat = luaM_new(ls->L, DestructPattern);
+          parsepattern(ls, pat);
+          addpatternbinding(ls, &bindings, pat);
+          haspatterns = 1;
+          new_localvarliteral(ls, "(destruct)");  /* temp for pattern */
           nparams++;
           break;
         }
@@ -1085,7 +1385,7 @@ static void parlist (LexState *ls) {
             new_localvarliteral(ls, "(vararg table)");
           break;
         }
-        default: luaX_syntaxerror(ls, "<name> or '...' expected");
+        default: luaX_syntaxerror(ls, "<name>, '{', or '...' expected");
       }
     } while (!varargk && testnext(ls, ','));
   }
@@ -1097,6 +1397,23 @@ static void parlist (LexState *ls) {
   }
   /* reserve registers for parameters (plus vararg parameter, if present) */
   luaK_reserveregs(fs, fs->nactvar);
+  /* Emit destructuring code for any pattern parameters */
+  for (i = 0; i < bindings.nbindings; i++) {
+    if (bindings.bindings[i].pattern != NULL) {
+      DestructPattern *pat = bindings.bindings[i].pattern;
+      int tempvidx = basevar + i;
+      int tempreg = getlocalvardesc(fs, tempvidx)->vd.ridx;
+      int npatlocals, localidx;
+      /* Create locals for all fields in the pattern */
+      npatlocals = createpatternlocals(ls, pat);
+      adjustlocalvars(ls, npatlocals);
+      luaK_reserveregs(fs, npatlocals);
+      /* Emit code to extract fields from temp into the new locals */
+      localidx = fs->nactvar - npatlocals;
+      emitpatternextractions(ls, pat, tempreg, &localidx);
+    }
+  }
+  freebindings(ls, &bindings);
 }
 
 
@@ -1656,7 +1973,8 @@ static void fixforjump (FuncState *fs, int pc, int dest, int back) {
 /*
 ** Generate code for a 'for' loop.
 */
-static void forbody (LexState *ls, int base, int line, int nvars, int isgen) {
+static void forbody (LexState *ls, int base, int line, int nvars, int isgen,
+                     BindingList *bindings, int bindingbase) {
   /* forbody -> DO block */
   static const OpCode forprep[2] = {OP_FORPREP, OP_TFORPREP};
   static const OpCode forloop[2] = {OP_FORLOOP, OP_TFORLOOP};
@@ -1669,6 +1987,25 @@ static void forbody (LexState *ls, int base, int line, int nvars, int isgen) {
   enterblock(fs, &bl, 0);  /* scope for declared variables */
   adjustlocalvars(ls, nvars);
   luaK_reserveregs(fs, nvars);
+  /* Emit destructuring code for any patterns in the binding list */
+  if (bindings != NULL && bindings->nbindings > 0) {
+    int i;
+    for (i = 0; i < bindings->nbindings; i++) {
+      if (bindings->bindings[i].pattern != NULL) {
+        DestructPattern *pat = bindings->bindings[i].pattern;
+        int tempvidx = bindingbase + i;
+        int tempreg = getlocalvardesc(fs, tempvidx)->vd.ridx;
+        int npatlocals, localidx;
+        /* Create locals for all fields in the pattern */
+        npatlocals = createpatternlocals(ls, pat);
+        adjustlocalvars(ls, npatlocals);
+        luaK_reserveregs(fs, npatlocals);
+        /* Emit code to extract fields from temp into the new locals */
+        localidx = fs->nactvar - npatlocals;
+        emitpatternextractions(ls, pat, tempreg, &localidx);
+      }
+    }
+  }
   block(ls);
   leaveblock(fs);  /* end of scope for declared variables */
   fixforjump(fs, prep, luaK_getlabel(fs), 0);
@@ -1700,25 +2037,51 @@ static void fornum (LexState *ls, TString *varname, int line) {
     luaK_reserveregs(fs, 1);
   }
   adjustlocalvars(ls, 2);  /* start scope for internal variables */
-  forbody(ls, base, line, 1, 0);
+  forbody(ls, base, line, 1, 0, NULL, 0);
 }
 
 
-static void forlist (LexState *ls, TString *indexname) {
-  /* forlist -> NAME {,NAME} IN explist forbody */
+static void forlist (LexState *ls, TString *indexname, TString *firstname,
+                     DestructPattern *firstpattern) {
+  /* forlist -> binding {, binding} IN explist forbody
+     binding -> NAME | '{' fields '}' */
   FuncState *fs = ls->fs;
   expdesc e;
   int nvars = 4;  /* function, state, closing, control */
   int line;
   int base = fs->freereg;
+  int bindingbase;
+  BindingList bindings;
+  int haspatterns = (firstpattern != NULL);
+  initbindings(&bindings);
   /* create internal variables */
   new_localvarliteral(ls, "(for state)");  /* iterator function */
   new_localvarliteral(ls, "(for state)");  /* state */
   new_localvarliteral(ls, "(for state)");  /* closing var. (after swap) */
-  new_varkind(ls, indexname, RDKCONST);  /* control variable */
+  bindingbase = fs->nactvar + 3;  /* bindings start after internal vars */
+  /* first binding (control variable) */
+  if (firstpattern != NULL) {
+    addpatternbinding(ls, &bindings, firstpattern);
+    new_localvarliteral(ls, "(destruct)");  /* temp for pattern */
+  }
+  else {
+    addsimplebinding(ls, &bindings, firstname);
+    new_varkind(ls, indexname, RDKCONST);  /* control variable */
+  }
   /* other declared variables */
   while (testnext(ls, ',')) {
-    new_localvar(ls, str_checkname(ls));
+    if (ls->t.token == '{') {
+      DestructPattern *pat = luaM_new(ls->L, DestructPattern);
+      parsepattern(ls, pat);
+      addpatternbinding(ls, &bindings, pat);
+      haspatterns = 1;
+      new_localvarliteral(ls, "(destruct)");  /* temp for pattern */
+    }
+    else {
+      TString *name = str_checkname(ls);
+      addsimplebinding(ls, &bindings, name);
+      new_localvar(ls, name);
+    }
     nvars++;
   }
   checknext(ls, TK_IN);
@@ -1727,22 +2090,36 @@ static void forlist (LexState *ls, TString *indexname) {
   adjustlocalvars(ls, 3);  /* start scope for internal variables */
   marktobeclosed(fs);  /* last internal var. must be closed */
   luaK_checkstack(fs, 2);  /* extra space to call iterator */
-  forbody(ls, base, line, nvars - 3, 1);
+  forbody(ls, base, line, nvars - 3, 1, haspatterns ? &bindings : NULL, bindingbase);
+  freebindings(ls, &bindings);
 }
 
 
 static void forstat (LexState *ls, int line) {
   /* forstat -> FOR (fornum | forlist) END */
   FuncState *fs = ls->fs;
-  TString *varname;
   BlockCnt bl;
   enterblock(fs, &bl, 1);  /* scope for loop and control variables */
   luaX_next(ls);  /* skip 'for' */
-  varname = str_checkname(ls);  /* first variable name */
-  switch (ls->t.token) {
-    case '=': fornum(ls, varname, line); break;
-    case ',': case TK_IN: forlist(ls, varname); break;
-    default: luaX_syntaxerror(ls, "'=' or 'in' expected");
+  /* Parse first binding: NAME or pattern */
+  if (ls->t.token == '{') {
+    TString *varname = luaX_newstring(ls, "(destruct)", sizeof("(destruct)") - 1);
+    DestructPattern *pat = luaM_new(ls->L, DestructPattern);
+    /* Pattern - must be generic for */
+    parsepattern(ls, pat);
+    if (ls->t.token != ',' && ls->t.token != TK_IN)
+      luaX_syntaxerror(ls, "',' or 'in' expected");
+    forlist(ls, varname, NULL, pat);
+  }
+  else {
+    TString *varname = str_checkname(ls);  /* first variable name */
+    switch (ls->t.token) {
+      case '=': fornum(ls, varname, line); break;
+      case ',': case TK_IN:
+        forlist(ls, varname, varname, NULL);
+        break;
+      default: luaX_syntaxerror(ls, "'=' or 'in' expected");
+    }
   }
   check_match(ls, TK_END, TK_FOR, line);
   leaveblock(fs);  /* loop scope ('break' jumps to this point) */
@@ -1820,20 +2197,39 @@ static void localstat (LexState *ls) {
   FuncState *fs = ls->fs;
   int toclose = -1;  /* index of to-be-closed variable (if any) */
   Vardesc *var;  /* last variable */
-  int vidx;  /* index of last variable */
+  int vidx = 0;  /* index of last variable */
   int nvars = 0;
   int nexps;
   expdesc e;
   /* get prefixed attribute (if any); default is regular local variable */
   lu_byte defkind = getvarattribute(ls, VDKREG);
+  BindingList bindings;
+  int haspatterns = 0;
+  int basevar;
+  int i;
+  initbindings(&bindings);
+  basevar = fs->nactvar;  /* first variable index we'll create */
   do {  /* for each variable */
-    TString *vname = str_checkname(ls);  /* get its name */
-    lu_byte kind = getvarattribute(ls, defkind);  /* postfixed attribute */
-    vidx = new_varkind(ls, vname, kind);  /* predeclare it */
-    if (kind == RDKTOCLOSE) {  /* to-be-closed? */
-      if (toclose != -1)  /* one already present? */
-        luaK_semerror(ls, "multiple to-be-closed variables in local list");
-      toclose = fs->nactvar + nvars;
+    if (ls->t.token == '{') {
+      /* Destructuring pattern */
+      DestructPattern *pat = luaM_new(ls->L, DestructPattern);
+      parsepattern(ls, pat);
+      addpatternbinding(ls, &bindings, pat);
+      haspatterns = 1;
+      /* Create hidden temp local for the pattern */
+      vidx = new_localvarliteral(ls, "(destruct)");
+    }
+    else {
+      TString *vname = str_checkname(ls);  /* get its name */
+      lu_byte kind = getvarattribute(ls, defkind);  /* postfixed attribute */
+      if (haspatterns)
+        addsimplebinding(ls, &bindings, vname);
+      vidx = new_varkind(ls, vname, kind);  /* predeclare it */
+      if (kind == RDKTOCLOSE) {  /* to-be-closed? */
+        if (toclose != -1)  /* one already present? */
+          luaK_semerror(ls, "multiple to-be-closed variables in local list");
+        toclose = fs->nactvar + nvars;
+      }
     }
     nvars++;
   } while (testnext(ls, ','));
@@ -1844,7 +2240,7 @@ static void localstat (LexState *ls) {
     nexps = 0;
   }
   var = getlocalvardesc(fs, vidx);  /* retrieve last variable */
-  if (nvars == nexps &&  /* no adjustments? */
+  if (!haspatterns && nvars == nexps &&  /* no adjustments? */
       var->vd.kind == RDKCONST &&  /* last variable is const? */
       luaK_exp2const(fs, &e, &var->k)) {  /* compile-time constant? */
     var->vd.kind = RDKCTC;  /* variable is a compile-time constant */
@@ -1855,6 +2251,24 @@ static void localstat (LexState *ls) {
     adjust_assign(ls, nvars, nexps, &e);
     adjustlocalvars(ls, nvars);
   }
+  /* For each pattern, create its locals and emit field extractions */
+  for (i = 0; i < bindings.nbindings; i++) {
+    if (bindings.bindings[i].pattern != NULL) {
+      DestructPattern *pat = bindings.bindings[i].pattern;
+      /* The temp is at variable index (basevar + i) */
+      int tempvidx = basevar + i;
+      int tempreg = getlocalvardesc(fs, tempvidx)->vd.ridx;
+      int npatlocals, localidx;
+      /* Create locals for all fields in the pattern */
+      npatlocals = createpatternlocals(ls, pat);
+      adjustlocalvars(ls, npatlocals);
+      luaK_reserveregs(fs, npatlocals);  /* reserve registers for pattern locals */
+      /* Emit code to extract fields from temp into the new locals */
+      localidx = fs->nactvar - npatlocals;
+      emitpatternextractions(ls, pat, tempreg, &localidx);
+    }
+  }
+  freebindings(ls, &bindings);
   checktoclose(fs, toclose);
 }
 

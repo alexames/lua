@@ -146,6 +146,13 @@ typedef struct Labellist {
 } Labellist;
 
 
+/* entry for tracking a bindings allocation */
+typedef struct BindingsEntry {
+  void *ptr;       /* pointer to bindings array */
+  size_t size;     /* size in bytes (for freeing) */
+} BindingsEntry;
+
+
 /* dynamic structures used by the parser */
 typedef struct Dyndata {
   struct {  /* list of all active local variables */
@@ -155,6 +162,11 @@ typedef struct Dyndata {
   } actvar;
   Labellist gt;  /* list of pending gotos */
   Labellist label;   /* list of active labels */
+  struct {  /* list of active bindings allocations (for cleanup on error) */
+    BindingsEntry *arr;
+    int n;
+    int size;
+  } bindings;
 } Dyndata;
 
 
