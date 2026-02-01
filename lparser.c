@@ -43,6 +43,8 @@
 #define eqstr(a,b)	((a) == (b))
 
 
+static void body(LexState *ls, expdesc *e, int ismethod, int line);
+
 /*
 ** nodes for block list (list of active blocks)
 */
@@ -969,11 +971,15 @@ typedef struct ConsControl {
 #endif
 
 
-static void recfieldkey (LexState *ls, expdesc* key) {
-  if (ls->t.token == TK_NAME)
+static int recfieldkey (LexState *ls, expdesc* key) {
+  int isfunction = ls->t.token == TK_FUNCTION;
+  if (isfunction)
+    luaX_next(ls); /* skip the FUNCTION */
+  if (ls->t.token == TK_NAME || isfunction)
     codename(ls, key);
   else  /* ls->t.token == '[' */
     yindex(ls, key);
+  return isfunction;
 }
 
 
@@ -995,6 +1001,7 @@ static void calldecors (LexState *ls, expdesc *t, expdesc *k, expdesc *v,
 static void recfield (LexState *ls, ConsControl *cc, decorstack *d) {
   /* recfield -> (NAME | '['exp']') = exp */
   FuncState *fs = ls->fs;
+  int isfunction;
   lu_byte reg = ls->fs->freereg;
   expdesc tab, key, val;
   if (d) {
@@ -1005,17 +1012,23 @@ static void recfield (LexState *ls, ConsControl *cc, decorstack *d) {
     adjustlocalvars(ls, 3); /* enter its scope */
   }
   /* get field key */
-  recfieldkey(ls, &key);
+  isfunction = recfieldkey(ls, &key);
   tab = *cc->t;
   if (d) {
     luaK_exp2nextreg(fs, &tab);
     luaK_exp2nextreg(fs, &key);
   }
   cc->nh++;
-  checknext(ls, '=');
+  if (!isfunction) {
+    checknext(ls, '=');
+  }
   luaK_indexed(fs, &tab, &key);
   /* evaluate value */
-  expr(ls, &val);
+  if (isfunction) {
+    body(ls, &val, 0, ls->linenumber);
+  } else {
+    expr(ls, &val);
+  }
   /* store result */
   if (d) {
     luaK_exp2nextreg(fs, &val);
@@ -1073,6 +1086,13 @@ static void field (LexState *ls, ConsControl *cc, decorstack* d_prev) {
         listfield(ls, cc);
       else
         recfield(ls, cc, d_prev);
+      break;
+    }
+    case TK_FUNCTION: {
+      if (luaX_lookahead(ls) == TK_NAME)
+        recfield(ls, cc, d_prev);
+      else
+        listfield(ls, cc);
       break;
     }
     case '[': {
