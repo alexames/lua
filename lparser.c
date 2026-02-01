@@ -1208,6 +1208,33 @@ static void body (LexState *ls, expdesc *e, int ismethod, int line) {
 }
 
 
+static void simplebody (LexState *ls, expdesc *e, int line) {
+  /* simplebody -> parlist `|' expr END */
+  FuncState new_fs;
+  expdesc ebody;
+  BlockCnt bl;
+  new_fs.f = addprototype(ls);
+  new_fs.f->linedefined = line;
+  checknext(ls, '(');
+  open_func(ls, &new_fs, &bl);
+  parlist(ls);
+  checknext(ls, ')');
+  if (testnext(ls, TK_DO)) {
+    statlist(ls);
+    new_fs.f->lastlinedefined = ls->linenumber;
+    check_match(ls, TK_END, TK_DO, line);
+  } else {
+    int reg;
+    expr(ls, &ebody);
+    reg = luaK_exp2anyreg(&new_fs, &ebody);
+    luaK_ret(&new_fs, reg, 1);
+    new_fs.f->lastlinedefined = ls->linenumber;
+  }
+  codeclosure(ls, e);
+  close_func(ls);
+}
+
+
 static int explist (LexState *ls, expdesc *v) {
   /* explist -> expr { ',' expr } */
   int n = 1;  /* at least one expression */
@@ -1245,6 +1272,11 @@ static void funcargs (LexState *ls, expdesc *f) {
     case TK_STRING: {  /* funcargs -> STRING */
       codestring(&args, ls->t.seminfo.ts);
       luaX_next(ls);  /* must use 'seminfo' before 'next' */
+      break;
+    }
+    case '$': {
+      luaX_next(ls);
+      simplebody(ls, &args, ls->linenumber);
       break;
     }
     default: {
@@ -1313,7 +1345,7 @@ static void suffixedexp (LexState *ls, expdesc *v) {
         funcargs(ls, v);
         break;
       }
-      case '(': case TK_STRING: case '{' /*}*/: {  /* funcargs */
+      case '(': case TK_STRING: case '{' /*}*/: case '$': {  /* funcargs */
         luaK_exp2nextreg(fs, v);
         funcargs(ls, v);
         break;
@@ -1368,6 +1400,11 @@ static void simpleexp (LexState *ls, expdesc *v) {
     case TK_FUNCTION: {
       luaX_next(ls);
       body(ls, v, 0, ls->linenumber);
+      return;
+    }
+    case '$': {  /* lambda */
+      luaX_next(ls);
+      simplebody(ls, v, ls->linenumber);
       return;
     }
     default: {
