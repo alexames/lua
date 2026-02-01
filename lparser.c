@@ -1687,6 +1687,7 @@ static void suffixedexp (LexState *ls, expdesc *v) {
         funcargs(ls, v);
         break;
       }
+      case TK_PIPEFWD:  /* pipe operator - return to let subexpr handle it */
       default: return;
     }
   }
@@ -1796,6 +1797,7 @@ static BinOpr getbinopr (int op) {
     case TK_BANDEQ: return OPR_BAND;
     case TK_BOREQ: return OPR_BOR;
     case TK_BXOREQ: return OPR_BXOR;
+    case TK_PIPEFWD: return OPR_PIPE;
     default: return OPR_NOBINOPR;
   }
 }
@@ -1817,7 +1819,8 @@ static const struct {
    {9, 8},                   /* '..' (right associative) */
    {3, 3}, {3, 3}, {3, 3},   /* ==, <, <= */
    {3, 3}, {3, 3}, {3, 3},   /* ~=, >, >= */
-   {2, 2}, {1, 1}            /* and, or */
+   {2, 2}, {1, 1},           /* and, or */
+   {3, 3}                    /* |> (pipe) - higher than 'and', lower than comparison */
 };
 
 #define UNARY_PRIORITY	12  /* priority for unary operators */
