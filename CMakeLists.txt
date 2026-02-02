@@ -22,7 +22,7 @@ option(LUA_BUILD_LIBRARY      "Build the Lua library target" ON)
 option(LUA_BUILD_INTERPRETER  "Build the 'lua' interpreter executable" ON)
 
 # Library type
-set(LUA_LIBRARY_TYPE "STATIC" CACHE STRING "Library type: STATIC or SHARED")
+set(LUA_LIBRARY_TYPE "SHARED" CACHE STRING "Library type: STATIC or SHARED")
 set_property(CACHE LUA_LIBRARY_TYPE PROPERTY STRINGS STATIC SHARED)
 
 # Warnings
@@ -220,6 +220,15 @@ if(LUA_BUILD_LIBRARY)
   endif()
 
   add_library(${LUA_PROJECT_NAME}::${LUA_LIBRARY_TARGET} ALIAS ${LUA_LIBRARY_TARGET})
+
+  # When building as a shared library on Windows, define LUA_BUILD_AS_DLL so that
+  # luaconf.h marks API functions with __declspec(dllexport) during the build and
+  # __declspec(dllimport) for consumers. This is required for C modules (DLLs) to
+  # link against the shared Lua library at runtime.
+  if(LUA_LIBRARY_TYPE STREQUAL "SHARED" AND WIN32)
+    target_compile_definitions(${LUA_LIBRARY_TARGET} PRIVATE LUA_BUILD_AS_DLL)
+    target_compile_definitions(${LUA_LIBRARY_TARGET} INTERFACE LUA_BUILD_AS_DLL)
+  endif()
 
   target_include_directories(${LUA_LIBRARY_TARGET}
     PUBLIC
