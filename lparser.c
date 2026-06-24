@@ -1449,10 +1449,141 @@ static void setvararg (FuncState *fs) {
 }
 
 
-static void parlist (LexState *ls) {
-  /* parlist -> [ {param ','} (param | '...') ]
-     param -> NAME | '{' fields '}' */
-  FuncState *fs = ls->fs;
+/*
+** {======================================================================
+** Typed function literals
+**
+** A function literal that declares at least one parameter or return type
+** compiles to a callable table built by 'make_typed_function' (see
+** 'lbaselib.c'), instead of a plain closure. Parameters are still parsed
+** and registered in the child function exactly as usual (so an untyped
+** literal is byte-for-byte a plain closure), but each ':' type expression
+** is evaluated in the PARENT scope and stored into one of two packed
+** 'table.pack'-shaped lists ('parameter_types' / 'return_types'). After the
+** closure is built, a single 'make_typed_function{...}' call is spliced in,
+** mirroring how the '@decorator' feature wraps a just-built closure. No VM
+** support is involved: the wrapper checks types through its '__call'.
+** =======================================================================
+*/
+
+/* upper bound on declared return types (parameters are already bounded by
+   MAXVARS through the normal local-variable machinery) */
+#define MAX_RET_TYPES		250
+
+/* build an interned TString for a string literal, anchored by the lexer */
+#define typedstr(ls, s)  \
+  luaX_newstring(ls, "" s, (sizeof(s)/sizeof(char)) - 1)
+
+
+/*
+** State threaded through the parse of one typed function literal. The two
+** packed lists live in the parent's registers; everything is relative to
+** 'saved_freereg' so a literal used as a call argument or under a decorator
+** reserves its scratch above the in-flight frame (no register collision).
+*/
+typedef struct TypedSig {
+  FuncState *pfs;      /* parent FuncState: where types and lists live */
+  int iswrapper;       /* set once the first ':' annotation is seen */
+  int saved_freereg;   /* parent freereg on entry; the result lands here */
+  int ptypes_reg;      /* register holding the parameter_types list */
+  int rtypes_reg;      /* register holding the return_types list */
+  int nparams;         /* declared parameters (does not count 'self') */
+  int nrets;           /* declared return types */
+  int ismethod;        /* method literal -> wrapper gets argument_offset = 1 */
+} TypedSig;
+
+
+static void init_typedsig (TypedSig *sig, FuncState *pfs, int ismethod) {
+  sig->pfs = pfs;
+  sig->iswrapper = 0;
+  sig->saved_freereg = pfs->freereg;
+  sig->ptypes_reg = sig->rtypes_reg = 0;
+  sig->nparams = sig->nrets = 0;
+  sig->ismethod = ismethod;
+}
+
+
+/* Emit an empty table plus the extra-argument slot OP_NEWTABLE requires. */
+static void newpacktable (FuncState *fs, int reg) {
+  luaK_codevABCk(fs, OP_NEWTABLE, reg, 0, 0, 0);
+  luaK_code(fs, CREATE_Ax(OP_EXTRAARG, 0));  /* mandatory following slot */
+}
+
+
+/*
+** Enter "wrapper mode" on the first annotation: keep the lists above the
+** parent's locals (and above any in-flight call/decorator frame), then
+** create both packed tables. Both are created together so their registers
+** are known regardless of whether a parameter or a return type comes first.
+*/
+static void enter_wrapper (TypedSig *sig) {
+  FuncState *pfs = sig->pfs;
+  if (sig->iswrapper) return;
+  sig->iswrapper = 1;
+  if (pfs->freereg < luaY_nvarstack(pfs))
+    pfs->freereg = luaY_nvarstack(pfs);
+  sig->ptypes_reg = pfs->freereg;
+  newpacktable(pfs, sig->ptypes_reg);
+  sig->rtypes_reg = sig->ptypes_reg + 1;
+  newpacktable(pfs, sig->rtypes_reg);
+  luaK_reserveregs(pfs, 2);  /* reserve the two lists for the literal's life */
+}
+
+
+/* Store the value currently on top of the parent stack into list[index]. */
+static void store_listslot (FuncState *fs, int list_reg, int index,
+                            expdesc *val) {
+  expdesc tab, key;
+  init_exp(&tab, VNONRELOC, list_reg);
+  init_exp(&key, VKINT, 0);
+  key.u.ival = index;
+  luaK_indexed(fs, &tab, &key);
+  luaK_storevar(fs, &tab, val);  /* OP_SETI; frees the (top) value register */
+}
+
+
+/* Set list.n = n (the true length, so nil holes are not lost). */
+static void store_listn (LexState *ls, FuncState *fs, int list_reg, int n) {
+  expdesc tab, key, val;
+  init_exp(&tab, VNONRELOC, list_reg);
+  codestring(&key, typedstr(ls, "n"));
+  luaK_indexed(fs, &tab, &key);
+  init_exp(&val, VKINT, 0);
+  val.u.ival = n;
+  luaK_storevar(fs, &tab, &val);  /* OP_SETFIELD with constant value */
+}
+
+
+/*
+** Evaluate one ':' type expression in the PARENT scope and store the value
+** into the parameter_types ('is_return' == 0) or return_types list at the
+** given 1-based position. The lexer is shared, so we only borrow 'ls->fs'
+** for the expression; code generation lands in the parent function.
+*/
+static void eval_typeannot (LexState *ls, TypedSig *sig, int is_return,
+                            int index) {
+  FuncState *pfs = sig->pfs;
+  FuncState *child = ls->fs;  /* the literal's own FuncState */
+  expdesc te;
+  int list_reg;
+  enter_wrapper(sig);
+  list_reg = is_return ? sig->rtypes_reg : sig->ptypes_reg;
+  ls->fs = pfs;               /* evaluate the type in the enclosing scope */
+  expr(ls, &te);
+  luaK_exp2nextreg(pfs, &te);  /* land the value at the parent's top */
+  ls->fs = child;             /* resume the literal's body */
+  init_exp(&te, VNONRELOC, pfs->freereg - 1);
+  store_listslot(pfs, list_reg, index, &te);
+}
+
+
+/*
+** Parse a parameter list with optional ':' type annotations. Parameters are
+** registered in the child function exactly as 'parlist' does; the only
+** addition is capturing each annotated type into the parameter_types list.
+*/
+static void typed_parlist (LexState *ls, TypedSig *sig) {
+  FuncState *fs = ls->fs;  /* child */
   Proto *f = fs->f;
   int nparams = 0;
   int varargk = 0;
@@ -1471,6 +1602,10 @@ static void parlist (LexState *ls) {
             addsimplebinding(ls, &bindings, name);
           new_localvar(ls, name);
           nparams++;
+          if (ls->t.token == ':') {  /* type annotation? */
+            luaX_next(ls);  /* skip ':' */
+            eval_typeannot(ls, sig, 0, nparams);
+          }
           break;
         }
         case '{': {
@@ -1480,6 +1615,10 @@ static void parlist (LexState *ls) {
           haspatterns = 1;
           new_localvarliteral(ls, "(destruct)");  /* temp for pattern */
           nparams++;
+          if (ls->t.token == ':') {  /* annotation checks the whole table */
+            luaX_next(ls);  /* skip ':' */
+            eval_typeannot(ls, sig, 0, nparams);
+          }
           break;
         }
         case TK_DOTS: {
@@ -1520,13 +1659,104 @@ static void parlist (LexState *ls) {
     }
   }
   freebindings(ls, &bindings);
+  sig->nparams = nparams;
 }
 
 
+/*
+** Parse an optional ':' return-type list (a comma-separated expression list,
+** the same grammar as a multiple-assignment right-hand side). Each type is
+** captured into the return_types list.
+*/
+static void typed_returns (LexState *ls, TypedSig *sig) {
+  if (ls->t.token == ':') {
+    int n = 0;
+    luaX_next(ls);  /* skip ':' */
+    do {
+      luaY_checklimit(sig->pfs, n, MAX_RET_TYPES, "return type annotations");
+      n++;
+      eval_typeannot(ls, sig, 1, n);
+    } while (testnext(ls, ','));
+    sig->nrets = n;
+  }
+}
+
+
+/* Copy R[src] to the top, then store it into list_reg[field], freeing the
+   copy. Used to feed fixed lower registers into the spec table cleanly. */
+static void store_specfield (LexState *ls, FuncState *fs, int spec_reg,
+                             const char *field, int src) {
+  expdesc tab, key, val;
+  luaK_codeABC(fs, OP_MOVE, fs->freereg, src, 0);
+  luaK_reserveregs(fs, 1);
+  init_exp(&val, VNONRELOC, fs->freereg - 1);
+  init_exp(&tab, VNONRELOC, spec_reg);
+  codestring(&key, luaX_newstring(ls, field, strlen(field)));
+  luaK_indexed(fs, &tab, &key);
+  luaK_storevar(fs, &tab, &val);
+}
+
+
+/*
+** Splice in the constructor call once the closure exists. Builds the spec
+** table { target, parameter_types, return_types[, argument_offset] }, calls
+** '_ENV.make_typed_function' on it (resolving through _ENV so a local cannot
+** shadow it), and settles the single result back at 'saved_freereg' so every
+** literal-store site sees exactly what a plain closure would have produced.
+*/
+static void build_typed_wrapper (LexState *ls, expdesc *e, TypedSig *sig) {
+  FuncState *fs = sig->pfs;  /* parent (current) FuncState */
+  expdesc fexp, key, spec;
+  int closure_reg = e->u.info;  /* codeclosure left the closure on top */
+  int mtf_reg, spec_reg, result_reg;
+  /* finish the two packed lists with their true lengths */
+  store_listn(ls, fs, sig->ptypes_reg, sig->nparams);
+  store_listn(ls, fs, sig->rtypes_reg, sig->nrets);
+  /* fetch make_typed_function as a global (through _ENV) */
+  singlevaraux(fs, ls->envn, &fexp, 1);
+  luaK_exp2anyregup(fs, &fexp);
+  codestring(&key, typedstr(ls, "make_typed_function"));
+  luaK_indexed(fs, &fexp, &key);
+  luaK_exp2nextreg(fs, &fexp);
+  mtf_reg = fexp.u.info;
+  /* spec = {} (the single constructor argument) */
+  spec_reg = fs->freereg;
+  newpacktable(fs, spec_reg);
+  luaK_reserveregs(fs, 1);
+  store_specfield(ls, fs, spec_reg, "target", closure_reg);
+  store_specfield(ls, fs, spec_reg, "parameter_types", sig->ptypes_reg);
+  store_specfield(ls, fs, spec_reg, "return_types", sig->rtypes_reg);
+  if (sig->ismethod) {
+    expdesc tab, ofs;
+    init_exp(&tab, VNONRELOC, spec_reg);
+    codestring(&key, typedstr(ls, "argument_offset"));
+    luaK_indexed(fs, &tab, &key);
+    init_exp(&ofs, VKINT, 0);
+    ofs.u.ival = 1;  /* skip the user-supplied 'self' */
+    luaK_storevar(fs, &tab, &ofs);
+  }
+  /* result = make_typed_function(spec) */
+  init_exp(&fexp, VNONRELOC, mtf_reg);
+  init_exp(&spec, VNONRELOC, spec_reg);
+  callfunc(ls, &fexp, &spec);
+  luaK_setoneret(fs, &fexp);
+  result_reg = fexp.u.info;  /* == mtf_reg */
+  /* settle the result where a plain closure would have landed */
+  if (result_reg != sig->saved_freereg)
+    luaK_codeABC(fs, OP_MOVE, sig->saved_freereg, result_reg, 0);
+  fs->freereg = cast_byte(sig->saved_freereg + 1);
+  init_exp(e, VNONRELOC, sig->saved_freereg);
+}
+
+/* }====================================================================== */
+
+
 static void body (LexState *ls, expdesc *e, int ismethod, int line) {
-  /* body ->  '(' parlist ')' block END */
+  /* body -> '(' typedparlist ')' [':' rettypes] block END */
   FuncState new_fs;
   BlockCnt bl;
+  TypedSig sig;
+  init_typedsig(&sig, ls->fs, ismethod);
   new_fs.f = addprototype(ls);
   new_fs.f->linedefined = line;
   open_func(ls, &new_fs, &bl);
@@ -1535,27 +1765,33 @@ static void body (LexState *ls, expdesc *e, int ismethod, int line) {
     new_localvarliteral(ls, "self");  /* create 'self' parameter */
     adjustlocalvars(ls, 1);
   }
-  parlist(ls);
+  typed_parlist(ls, &sig);
   checknext(ls, ')');
+  typed_returns(ls, &sig);
   statlist(ls);
   new_fs.f->lastlinedefined = ls->linenumber;
   check_match(ls, TK_END, TK_FUNCTION, line);
   codeclosure(ls, e);
   close_func(ls);
+  if (sig.iswrapper)
+    build_typed_wrapper(ls, e, &sig);
 }
 
 
 static void simplebody (LexState *ls, expdesc *e, int line) {
-  /* simplebody -> parlist `|' expr END */
+  /* simplebody -> '(' typedparlist ')' [':' rettypes] (DO block END | expr) */
   FuncState new_fs;
   expdesc ebody;
   BlockCnt bl;
+  TypedSig sig;
+  init_typedsig(&sig, ls->fs, 0);
   new_fs.f = addprototype(ls);
   new_fs.f->linedefined = line;
   checknext(ls, '(');
   open_func(ls, &new_fs, &bl);
-  parlist(ls);
+  typed_parlist(ls, &sig);
   checknext(ls, ')');
+  typed_returns(ls, &sig);
   if (testnext(ls, TK_DO)) {
     statlist(ls);
     new_fs.f->lastlinedefined = ls->linenumber;
@@ -1569,6 +1805,8 @@ static void simplebody (LexState *ls, expdesc *e, int line) {
   }
   codeclosure(ls, e);
   close_func(ls);
+  if (sig.iswrapper)
+    build_typed_wrapper(ls, e, &sig);
 }
 
 
