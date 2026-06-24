@@ -513,6 +513,98 @@ static int luaB_tostring (lua_State *L) {
 }
 
 
+/*
+** {======================================================================
+** Typed functions
+**
+** A typed function literal (e.g. 'function f(x: T): R ... end') compiles
+** to a plain table carrying the underlying closure plus its parameter and
+** return type lists, behind a single shared metatable whose '__call'
+** performs the run-time type checks. The constructor 'make_typed_function'
+** simply stamps that metatable onto a spec table, so a user can build a
+** byte-identical value by hand. None of this touches the VM: a typed call
+** dispatches through the ordinary '__call' metamethod.
+** =======================================================================
+*/
+
+/* registry key under which the shared metatable is stashed */
+#define LUA_TYPEDFUNCTIONMT	"_TYPED_FUNCTION_MT"
+
+/*
+** Source of the shared metatable, run once at 'luaopen_base'. It returns
+** the metatable. '__call' is a Lua closure on purpose: a Lua tail call in
+** the no-return fast path keeps deep param-only recursion O(1) on the
+** stack (a C '__call' would grow the C stack per recursion). This is also
+** the exact hand-writable equivalent published in the documentation; the
+** library functions it uses ('string.format', 'table.pack', ...) are
+** resolved as globals at call time, since the string/table libraries are
+** not yet open when this runs during base-library initialization.
+*/
+static const char typedfunction_bootstrap[] =
+"local function isinstance(value, expected_type)\n"
+"  local check = expected_type.__isinstance\n"
+"  return check ~= nil and check(expected_type, value)\n"
+"end\n"
+"local function typename(value)\n"
+"  local mt = getmetatable(value)\n"
+"  if mt and mt.__name then return mt.__name end\n"
+"  return type(value)\n"
+"end\n"
+"local TypedFunction = {}\n"
+"TypedFunction.__name = 'typed function'\n"
+"TypedFunction.__tostring = function(t)\n"
+"  return 'typed function: ' .. tostring(t.target)\n"
+"end\n"
+"TypedFunction.__call = function(t, ...)\n"
+"  local parameter_types = t.parameter_types\n"
+"  local return_types = t.return_types\n"
+"  local offset = t.argument_offset or 0\n"
+"  for i = 1, parameter_types.n do\n"
+"    local expected = parameter_types[i]\n"
+"    if expected ~= nil then\n"
+"      local value = select(offset + i, ...)\n"
+"      if not isinstance(value, expected) then\n"
+"        error(string.format('bad argument #%d (%s expected, got %s)',\n"
+"          i, tostring(expected), typename(value)), 2)\n"
+"      end\n"
+"    end\n"
+"  end\n"
+"  if return_types.n == 0 then\n"
+"    return t.target(...)\n"
+"  end\n"
+"  local results = table.pack(t.target(...))\n"
+"  local checked = return_types.n < results.n and return_types.n or results.n\n"
+"  for i = 1, checked do\n"
+"    local expected = return_types[i]\n"
+"    if expected ~= nil and not isinstance(results[i], expected) then\n"
+"      error(string.format('bad return value #%d (%s expected, got %s)',\n"
+"        i, tostring(expected), typename(results[i])), 2)\n"
+"    end\n"
+"  end\n"
+"  return table.unpack(results, 1, results.n)\n"
+"end\n"
+"return TypedFunction\n";
+
+
+/*
+** make_typed_function(spec): stamp the shared metatable onto 'spec' and
+** return it. 'spec' carries the fields the '__call' above reads: 'target'
+** (the underlying closure), 'parameter_types' and 'return_types' (each a
+** 'table.pack'-shaped list with an 'n' length and possibly-nil holes for
+** unannotated positions), and an optional 'argument_offset' (1 for methods,
+** to skip 'self').
+*/
+static int luaB_make_typed_function (lua_State *L) {
+  luaL_checktype(L, 1, LUA_TTABLE);
+  lua_settop(L, 1);  /* keep only the spec table */
+  lua_getfield(L, LUA_REGISTRYINDEX, LUA_TYPEDFUNCTIONMT);  /* shared mt */
+  lua_setmetatable(L, 1);  /* setmetatable(spec, mt) */
+  return 1;  /* return the now-typed spec */
+}
+
+/* }====================================================================== */
+
+
 static const luaL_Reg base_funcs[] = {
   {"assert", luaB_assert},
   {"collectgarbage", luaB_collectgarbage},
@@ -522,6 +614,7 @@ static const luaL_Reg base_funcs[] = {
   {"ipairs", luaB_ipairs},
   {"loadfile", luaB_loadfile},
   {"load", luaB_load},
+  {"make_typed_function", luaB_make_typed_function},
   {"next", luaB_next},
   {"pairs", luaB_pairs},
   {"pcall", luaB_pcall},
@@ -554,6 +647,13 @@ LUAMOD_API int luaopen_base (lua_State *L) {
   /* set global _VERSION */
   lua_pushliteral(L, LUA_VERSION);
   lua_setfield(L, -2, "_VERSION");
+  /* build the shared typed-function metatable and stash it in the registry */
+  if (luaL_loadbuffer(L, typedfunction_bootstrap,
+                      sizeof(typedfunction_bootstrap) - 1,
+                      "=[typed function]") != LUA_OK)
+    lua_error(L);
+  lua_call(L, 0, 1);  /* run bootstrap; leaves the metatable on the stack */
+  lua_setfield(L, LUA_REGISTRYINDEX, LUA_TYPEDFUNCTIONMT);  /* stash it */
   return 1;
 }
 
