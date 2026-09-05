@@ -35,6 +35,13 @@ set_property(CACHE LUA_LIBRARY_TYPE PROPERTY STRINGS STATIC SHARED)
 option(LUA_BUILD_AS_CXX "Compile the Lua sources as C++, making an error a C++ throw rather than a longjmp" OFF)
 if(LUA_BUILD_AS_CXX)
   enable_language(CXX)
+  # Without CMP0119 the LANGUAGE property picks the C++ driver but not the
+  # flag that tells it to READ a .c file as C++. MSVC's rule carries /TP
+  # anyway and g++ goes by the driver, but clang++ warns that it is treating
+  # the input as C++, which LUA_ENABLE_WERROR turns into a build failure.
+  if(POLICY CMP0119)
+    cmake_policy(SET CMP0119 NEW)
+  endif()
 endif()
 
 # Warnings
