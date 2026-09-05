@@ -25,6 +25,18 @@ option(LUA_BUILD_INTERPRETER  "Build the 'lua' interpreter executable" ON)
 set(LUA_LIBRARY_TYPE "STATIC" CACHE STRING "Library type: STATIC or SHARED")
 set_property(CACHE LUA_LIBRARY_TYPE PROPERTY STRINGS STATIC SHARED)
 
+# Error model. ldo.c selects a C++ throw for LUAI_THROW whenever __cplusplus is
+# defined, so compiling the sources as C++ is the whole switch. A host whose
+# lua_CFunction frames are C++ wants it: a longjmp out of Lua unwinds those
+# frames for real on Windows, and MSVC only keeps a frame's unwind state
+# accurate across calls it believes can throw -- which an extern "C" call is
+# not. The API loses its C linkage with it, since LUA_API is a bare `extern`,
+# so a consumer including lua.h inside `extern "C"` no longer links.
+option(LUA_BUILD_AS_CXX "Compile the Lua sources as C++, making an error a C++ throw rather than a longjmp" OFF)
+if(LUA_BUILD_AS_CXX)
+  enable_language(CXX)
+endif()
+
 # Warnings
 option(LUA_ENABLE_WERROR "Treat warnings as errors" ON)
 
@@ -156,6 +168,17 @@ set(LUA_INTERPRETER_SOURCES
   "${CMAKE_CURRENT_LIST_DIR}/lua.c"
 )
 
+# The interpreter is in the list because it links the library: leaving lua.c as
+# C would have it declare the API with C linkage the library no longer exports.
+if(LUA_BUILD_AS_CXX)
+  set_source_files_properties(
+    ${LUA_MODULE_SOURCES}
+    ${LUA_LIBRARY_SOURCES}
+    ${LUA_INTERPRETER_SOURCES}
+    PROPERTIES LANGUAGE CXX
+  )
+endif()
+
 # ------------------------------------------------------------------------------
 # Helper: add definition only if value is set
 # ------------------------------------------------------------------------------
@@ -247,6 +270,14 @@ if(LUA_BUILD_LIBRARY)
     OUTPUT_NAME "${LUA_LIBRARY_NAME}"
   )
 
+  if(LUA_BUILD_AS_CXX)
+    set_target_properties(${LUA_LIBRARY_TARGET} PROPERTIES
+      CXX_STANDARD 17
+      CXX_STANDARD_REQUIRED YES
+      CXX_EXTENSIONS NO
+    )
+  endif()
+
   # Core compile definitions (no -D prefixes)
   if(LUA_CONF_32BITS)
     target_compile_definitions(${LUA_LIBRARY_TARGET} PUBLIC LUA_32BITS)
@@ -337,6 +368,16 @@ if(LUA_BUILD_LIBRARY)
     #   C4702: unreachable code
     #   C4709: comma operator within array index expression
     target_compile_options(${LUA_LIBRARY_TARGET} PRIVATE /wd4310 /wd4324 /wd4701 /wd4702 /wd4709)
+    # Warnings MSVC raises only on the C++ reading of code that is warning-free
+    # as C:
+    #   C4245: signed/unsigned mismatch on assignment -- the C++ LUAI_TRY in
+    #          ldo.c assigns -1 to a TStatus, which is an unsigned lu_byte
+    #   C4334: 32-bit shift result converted to 64 bits
+    #   C4551: function call missing argument list -- the `(void)luaP_isOT;`
+    #          idiom that silences unused-function warnings with asserts off
+    if(LUA_BUILD_AS_CXX)
+      target_compile_options(${LUA_LIBRARY_TARGET} PRIVATE /wd4245 /wd4334 /wd4551)
+    endif()
     if(LUA_ENABLE_WERROR)
       target_compile_options(${LUA_LIBRARY_TARGET} PRIVATE /WX)
     endif()
@@ -369,6 +410,14 @@ if(LUA_BUILD_INTERPRETER)
   set_target_properties(${LUA_INTERPRETER_TARGET} PROPERTIES
     OUTPUT_NAME "${LUA_INTERPRETER_NAME}"
   )
+
+  if(LUA_BUILD_AS_CXX)
+    set_target_properties(${LUA_INTERPRETER_TARGET} PROPERTIES
+      CXX_STANDARD 17
+      CXX_STANDARD_REQUIRED YES
+      CXX_EXTENSIONS NO
+    )
+  endif()
 
   if(LUA_BUILD_LIBRARY)
     target_link_libraries(${LUA_INTERPRETER_TARGET} PRIVATE ${LUA_LIBRARY_TARGET})
